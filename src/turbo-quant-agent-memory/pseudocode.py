@@ -1,16 +1,15 @@
 """
 Runnable compressed agent memory MVP prototype.
 
-Upgraded version:
+Features:
 - full-precision normalized vectors kept for exact rerank
 - compressed shadow index used for candidate generation
 - corpus-calibrated per-dimension quantization
-- richer offline embedding provider
-- more informative benchmark output
+- supports both offline mock embeddings and real OpenAI embeddings
+- simple local embedding cache on disk
 
-Still intentionally simple:
+Still intentionally compact:
 - standard library only
-- no external APIs
 - no random rotation / QJL
 """
 
@@ -18,13 +17,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Tuple
+from pathlib import Path
 import argparse
 import hashlib
 import heapq
+import json
 import math
+import os
 import random
 import statistics
 import sys
+import urllib.request
 
 
 # -----------------------------------------------------------------------------
@@ -92,22 +95,62 @@ def clip(value: float, lo: float, hi: float) -> float:
 
 
 # -----------------------------------------------------------------------------
-# Offline embedding provider
+# Embedding cache
 # -----------------------------------------------------------------------------
 
-class MockEmbeddingProvider:
-    """
-    Deterministic local embedder with a bit more structure than a raw hash bag.
+class EmbeddingCache:
+    def __init__(self, cache_dir: Path):
+        self.cache_dir = cache_dir
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
 
-    Ingredients:
-    - hashed token bucket features
-    - word + bigram features
-    - domain keyword boosts
-    - a few lightweight lexical statistics
+    def _path_for_key(self, key: str) -> Path:
+        return self.cache_dir / f"{key}.json"
 
-    It is still a toy, but it behaves better for retrieval than the earlier version.
-    """
+    def make_key(self, provider: str, model: str, text: str) -> str:
+        digest = hashlib.sha256(f"{provider}\n{model}\n{text}".encode("utf-8")).hexdigest()
+        return digest
 
+    def get(self, key: str) -> Optional[List[float]]:
+        path = self._path_for_key(key)
+        if not path.exists():
+            return None
+        data = json.loads(path.read_text())
+        return data["embedding"]
+
+    def set(self, key: str, embedding: List[float]) -> None:
+        path = self._path_for_key(key)
+        path.write_text(json.dumps({"embedding": embedding}))
+
+
+# -----------------------------------------------------------------------------
+# Embedding providers
+# -----------------------------------------------------------------------------
+
+class BaseEmbeddingProvider:
+    def __init__(self, model_name: str, cache: Optional[EmbeddingCache] = None):
+        self.model_name = model_name
+        self.cache = cache
+
+    def provider_name(self) -> str:
+        raise NotImplementedError
+
+    def embed_text(self, text: str) -> List[float]:
+        if self.cache is None:
+            return self._embed_uncached(text)
+
+        key = self.cache.make_key(self.provider_name(), self.model_name, text)
+        cached = self.cache.get(key)
+        if cached is not None:
+            return cached
+        embedding = self._embed_uncached(text)
+        self.cache.set(key, embedding)
+        return embedding
+
+    def _embed_uncached(self, text: str) -> List[float]:
+        raise NotImplementedError
+
+
+class MockEmbeddingProvider(BaseEmbeddingProvider):
     DOMAIN_KEYWORDS = {
         "quantization": ["quantization", "quant", "compression", "compressed", "scalar"],
         "memory": ["memory", "recall", "context", "episodic", "semantic"],
@@ -117,11 +160,14 @@ class MockEmbeddingProvider:
         "agent": ["agent", "tool", "planner", "autonomy", "task"],
     }
 
-    def __init__(self, model_name: str = "mock-hash-embedder-v2", dim: int = 384):
-        self.model_name = model_name
+    def __init__(self, model_name: str = "mock-hash-embedder-v2", dim: int = 384, cache: Optional[EmbeddingCache] = None):
+        super().__init__(model_name=model_name, cache=cache)
         self.dim = dim
 
-    def embed_text(self, text: str) -> List[float]:
+    def provider_name(self) -> str:
+        return "mock"
+
+    def _embed_uncached(self, text: str) -> List[float]:
         vec = [0.0] * self.dim
         lowered = text.lower()
         tokens = self._tokenize(lowered)
@@ -129,30 +175,25 @@ class MockEmbeddingProvider:
         if not tokens:
             return vec
 
-        # word features
         for token in tokens:
             self._signed_hash_add(vec, f"w:{token}", 1.0)
             if len(token) > 4:
                 self._signed_hash_add(vec, f"stem:{token[:5]}", 0.35)
 
-        # bigram features help phrase-level retrieval
         for i in range(len(tokens) - 1):
             bigram = tokens[i] + "_" + tokens[i + 1]
             self._signed_hash_add(vec, f"b:{bigram}", 0.65)
 
-        # domain boosts
-        for group_idx, (_group, words) in enumerate(self.DOMAIN_KEYWORDS.items()):
+        for group_idx, (group, words) in enumerate(self.DOMAIN_KEYWORDS.items()):
             count = sum(lowered.count(word) for word in words)
             if count:
                 vec[group_idx] += 1.25 * count
-                self._signed_hash_add(vec, f"domain:{_group}", 0.9 * count)
+                self._signed_hash_add(vec, f"domain:{group}", 0.9 * count)
 
-        # lexical statistics
         vec[20] += len(tokens) / 30.0
         vec[21] += len(set(tokens)) / max(1, len(tokens))
         vec[22] += sum(ch.isdigit() for ch in lowered) / 10.0
         vec[23] += lowered.count("-") / 5.0
-
         return vec
 
     def _signed_hash_add(self, vec: List[float], key: str, weight: float) -> None:
@@ -183,20 +224,48 @@ class MockEmbeddingProvider:
         return out
 
 
+class OpenAIEmbeddingProvider(BaseEmbeddingProvider):
+    def __init__(self, api_key: str, model_name: str = "text-embedding-3-small", cache: Optional[EmbeddingCache] = None):
+        super().__init__(model_name=model_name, cache=cache)
+        self.api_key = api_key
+
+    def provider_name(self) -> str:
+        return "openai"
+
+    def _embed_uncached(self, text: str) -> List[float]:
+        payload = json.dumps({
+            "input": text,
+            "model": self.model_name,
+        }).encode("utf-8")
+
+        req = urllib.request.Request(
+            url="https://api.openai.com/v1/embeddings",
+            data=payload,
+            method="POST",
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self.api_key}",
+            },
+        )
+
+        try:
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                body = resp.read().decode("utf-8")
+        except Exception as e:
+            raise RuntimeError(f"OpenAI embeddings request failed: {e}") from e
+
+        try:
+            data = json.loads(body)
+            return data["data"][0]["embedding"]
+        except Exception as e:
+            raise RuntimeError(f"Failed to parse OpenAI embeddings response: {e}; body={body[:500]}") from e
+
+
 # -----------------------------------------------------------------------------
 # Corpus-calibrated quantizer
 # -----------------------------------------------------------------------------
 
 class CalibratedScalarQuantizer:
-    """
-    Per-dimension symmetric scalar quantizer.
-
-    Improvement over the naive prototype:
-    - each dimension gets its own clip range based on observed corpus values
-    - quantization is calibrated from actual normalized embeddings
-    - approximate scoring can use per-dimension dequantization
-    """
-
     def __init__(self, bits: int = 8, default_alpha: float = 0.25):
         if bits not in (4, 8):
             raise ValueError("Only 4-bit and 8-bit modes are supported")
@@ -210,24 +279,17 @@ class CalibratedScalarQuantizer:
     def fit(self, vectors: List[List[float]]) -> None:
         if not vectors:
             raise ValueError("Need at least one vector to calibrate quantizer")
-
         dim = len(vectors[0])
         alphas = []
         steps = []
-
         for j in range(dim):
             values = [abs(v[j]) for v in vectors]
-            if not values:
-                alpha = self.default_alpha
-            else:
-                # use a robust-ish high percentile approximation from sorted values
-                ordered = sorted(values)
-                idx = min(len(ordered) - 1, max(0, int(0.98 * (len(ordered) - 1))))
-                alpha = max(ordered[idx], self.default_alpha / 8.0)
-                alpha = min(alpha, 1.0)
+            ordered = sorted(values)
+            idx = min(len(ordered) - 1, max(0, int(0.98 * (len(ordered) - 1))))
+            alpha = max(ordered[idx], self.default_alpha / 8.0)
+            alpha = min(alpha, 1.0)
             alphas.append(alpha)
             steps.append((2.0 * alpha) / self.max_int)
-
         self.alphas = alphas
         self.steps = steps
 
@@ -237,11 +299,9 @@ class CalibratedScalarQuantizer:
     def quantize_vector(self, vec: List[float]) -> Tuple[bytes, float]:
         if not self.is_fit():
             raise RuntimeError("Quantizer must be fit before use")
-
         codes: List[int] = []
         saturated = 0
         assert self.alphas is not None and self.steps is not None
-
         for x, alpha, step in zip(vec, self.alphas, self.steps):
             x_clipped = clip(x, -alpha, alpha)
             if x_clipped != x:
@@ -249,34 +309,16 @@ class CalibratedScalarQuantizer:
             q = round((x_clipped + alpha) / step)
             q = max(0, min(self.max_int, int(q)))
             codes.append(q)
-
         return self.pack_codes(codes), saturated / max(1, len(vec))
 
-    def dequantize_vector(self, packed_codes: bytes, dim: int) -> List[float]:
-        if not self.is_fit():
-            raise RuntimeError("Quantizer must be fit before use")
-        assert self.alphas is not None and self.steps is not None
-
-        codes = self.unpack_codes(packed_codes, dim)
-        out = []
-        for q, alpha, step in zip(codes, self.alphas, self.steps):
-            out.append(-alpha + q * step)
-        return out
-
     def score_query_against_codes(self, query_vec: List[float], packed_codes: bytes, dim: int) -> float:
-        """
-        Approximate score via implicit dequantization.
-        Still simple, but clearer and calibrated.
-        """
         if not self.is_fit():
             raise RuntimeError("Quantizer must be fit before use")
         assert self.alphas is not None and self.steps is not None
-
         codes = self.unpack_codes(packed_codes, dim)
         score = 0.0
         for qx, q, alpha, step in zip(query_vec, codes, self.alphas, self.steps):
-            approx_x = -alpha + q * step
-            score += qx * approx_x
+            score += qx * (-alpha + q * step)
         return score
 
     def average_alpha(self) -> float:
@@ -287,7 +329,6 @@ class CalibratedScalarQuantizer:
     def pack_codes(self, codes: List[int]) -> bytes:
         if self.bits == 8:
             return bytes(codes)
-
         packed = bytearray()
         for i in range(0, len(codes), 2):
             a = codes[i]
@@ -298,7 +339,6 @@ class CalibratedScalarQuantizer:
     def unpack_codes(self, packed: bytes, dim: int) -> List[int]:
         if self.bits == 8:
             return list(packed[:dim])
-
         out: List[int] = []
         for byte in packed:
             out.append((byte >> 4) & 0x0F)
@@ -336,7 +376,7 @@ class MemoryStore:
 # -----------------------------------------------------------------------------
 
 class MemoryIndexer:
-    def __init__(self, store: MemoryStore, embedder: MockEmbeddingProvider, quantizer: CalibratedScalarQuantizer):
+    def __init__(self, store: MemoryStore, embedder: BaseEmbeddingProvider, quantizer: CalibratedScalarQuantizer):
         self.store = store
         self.embedder = embedder
         self.quantizer = quantizer
@@ -370,10 +410,8 @@ class MemoryIndexer:
         ids = self.store.memory_ids()
         if not ids:
             return
-
         normalized_vectors = [self.store.embeddings[mid].normalized_f32 for mid in ids]
         self.quantizer.fit(normalized_vectors)
-
         self.store.quantized = {}
         for memory_id in ids:
             emb = self.store.embeddings[memory_id]
@@ -395,7 +433,7 @@ class MemoryIndexer:
 # -----------------------------------------------------------------------------
 
 class MemoryRetriever:
-    def __init__(self, store: MemoryStore, embedder: MockEmbeddingProvider, quantizer: CalibratedScalarQuantizer):
+    def __init__(self, store: MemoryStore, embedder: BaseEmbeddingProvider, quantizer: CalibratedScalarQuantizer):
         self.store = store
         self.embedder = embedder
         self.quantizer = quantizer
@@ -441,14 +479,7 @@ class MemoryRetriever:
             emb = self.store.embeddings[cand.memory_id]
             item = self.store.items[cand.memory_id]
             exact_score = dot(query_normed, emb.normalized_f32)
-            reranked.append(
-                SearchResult(
-                    memory_id=cand.memory_id,
-                    approx_score=cand.approx_score,
-                    exact_score=exact_score,
-                    content=item.content,
-                )
-            )
+            reranked.append(SearchResult(cand.memory_id, cand.approx_score, exact_score, item.content))
         reranked.sort(key=lambda r: r.exact_score if r.exact_score is not None else -1e9, reverse=True)
         return reranked[:k]
 
@@ -457,9 +488,24 @@ class MemoryRetriever:
 # Demo + benchmark helpers
 # -----------------------------------------------------------------------------
 
-def build_system(bits: int = 8, dim: int = 384):
+def build_embedder(embedder_name: str, cache_dir: Path, dim: int = 384) -> BaseEmbeddingProvider:
+    cache = EmbeddingCache(cache_dir)
+    if embedder_name == "mock":
+        return MockEmbeddingProvider(dim=dim, cache=cache)
+    if embedder_name == "openai":
+        api_key = os.environ.get("OPENAI_API_KEY")
+        if not api_key:
+            raise RuntimeError("OPENAI_API_KEY is required when --embedder openai is selected")
+        model = os.environ.get("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
+        return OpenAIEmbeddingProvider(api_key=api_key, model_name=model, cache=cache)
+    raise ValueError(f"Unknown embedder: {embedder_name}")
+
+
+def build_system(bits: int = 8, embedder_name: str = "mock", dim: int = 384):
+    root = Path(__file__).resolve().parent
+    cache_dir = root / ".cache" / "embeddings"
     store = MemoryStore()
-    embedder = MockEmbeddingProvider(dim=dim)
+    embedder = build_embedder(embedder_name, cache_dir=cache_dir, dim=dim)
     quantizer = CalibratedScalarQuantizer(bits=bits)
     indexer = MemoryIndexer(store, embedder, quantizer)
     retriever = MemoryRetriever(store, embedder, quantizer)
@@ -491,13 +537,13 @@ def print_results(title: str, results: List[SearchResult]) -> None:
         print(f"{i:2d}. {r.memory_id} approx={r.approx_score:.4f}{exact} :: {r.content}")
 
 
-def run_demo(bits: int) -> None:
-    _, _, quantizer, indexer, retriever = build_system(bits=bits)
+def run_demo(bits: int, embedder_name: str) -> None:
+    _, embedder, quantizer, indexer, retriever = build_system(bits=bits, embedder_name=embedder_name)
     load_demo_memories(indexer)
 
     print(
-        f"Running demo with {quantizer.bits}-bit calibrated quantization, "
-        f"avg_alpha={quantizer.average_alpha():.4f}"
+        f"Running demo with embedder={embedder.provider_name()} model={embedder.model_name} "
+        f"bits={quantizer.bits} avg_alpha={quantizer.average_alpha():.4f}"
     )
 
     queries = [
@@ -526,21 +572,15 @@ def generate_synthetic_corpus(indexer: MemoryIndexer, n: int, seed: int = 7) -> 
         "search": ["nearest", "neighbor", "rerank", "candidate", "cosine", "index", "retrieval"],
     }
     labels = list(topics.keys())
-
     for i in range(n):
         label = random.choice(labels)
         words = topics[label]
         chosen = random.sample(words, k=4)
         noise_label = random.choice(labels)
         noise_words = random.sample(topics[noise_label], k=2)
-        content = (
-            f"memory {i} about {label} systems with {' '.join(chosen)} "
-            f"and note {' '.join(noise_words)}"
-        )
+        content = f"memory {i} about {label} systems with {' '.join(chosen)} and note {' '.join(noise_words)}"
         indexer.ingest_memory(f"syn_{i}", content, memory_type=label)
-
     indexer.rebuild_quantized_index()
-
 
 
 def recall_at_k(predicted: List[str], exact: List[str], k: int) -> float:
@@ -565,9 +605,8 @@ def quant_diagnostics(store: MemoryStore) -> Tuple[float, float, float]:
     return min(sats), statistics.mean(sats), max(sats)
 
 
-
-def run_benchmark(bits: int, n_memories: int, n_queries: int, k: int, n_candidates: int) -> None:
-    store, _, quantizer, indexer, retriever = build_system(bits=bits)
+def run_benchmark(bits: int, embedder_name: str, n_memories: int, n_queries: int, k: int, n_candidates: int) -> None:
+    store, embedder, quantizer, indexer, retriever = build_system(bits=bits, embedder_name=embedder_name)
     generate_synthetic_corpus(indexer, n_memories)
 
     query_topics = [
@@ -604,6 +643,7 @@ def run_benchmark(bits: int, n_memories: int, n_queries: int, k: int, n_candidat
 
     print("\nBenchmark results")
     print("-----------------")
+    print(f"embedder:                     {embedder.provider_name()} ({embedder.model_name})")
     print(f"memories:                     {n_memories}")
     print(f"queries:                      {n_queries}")
     print(f"bits:                         {bits}")
@@ -630,9 +670,11 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
 
     demo = sub.add_parser("demo", help="run small interactive demo")
     demo.add_argument("--bits", type=int, default=8, choices=[4, 8])
+    demo.add_argument("--embedder", type=str, default="mock", choices=["mock", "openai"])
 
     bench = sub.add_parser("benchmark", help="run synthetic benchmark")
     bench.add_argument("--bits", type=int, default=8, choices=[4, 8])
+    bench.add_argument("--embedder", type=str, default="mock", choices=["mock", "openai"])
     bench.add_argument("--memories", type=int, default=1000)
     bench.add_argument("--queries", type=int, default=50)
     bench.add_argument("--k", type=int, default=10)
@@ -647,12 +689,13 @@ def main(argv: List[str]) -> int:
     cmd = args.command or "demo"
 
     if cmd == "demo":
-        run_demo(bits=args.bits)
+        run_demo(bits=args.bits, embedder_name=args.embedder)
         return 0
 
     if cmd == "benchmark":
         run_benchmark(
             bits=args.bits,
+            embedder_name=args.embedder,
             n_memories=args.memories,
             n_queries=args.queries,
             k=args.k,

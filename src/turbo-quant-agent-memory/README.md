@@ -3,48 +3,63 @@
 Minimal runnable MVP prototype for a **TurboQuant-inspired agent memory system**.
 
 This is **not** full TurboQuant.
-It is a compact offline prototype for testing a more production-shaped retrieval architecture:
+It is a compact prototype for testing a more production-shaped retrieval architecture:
 
 - keep **full-precision embeddings** as source of truth
 - build a **compressed shadow index**
 - use **exact rerank** as the correction layer
 - improve compressed retrieval with **corpus-calibrated per-dimension quantization**
+- support both **offline mock embeddings** and **real OpenAI embeddings**
 
 ## Files
 
 - `MVP_SPEC.md` — goals, non-goals, success criteria, milestones, metrics
 - `ARCHITECTURE.md` — ingestion flow, storage layers, retrieval cascade, future extensions
 - `SCHEMA.md` — suggested data model for memory records, embeddings, and quantized index
-- `pseudocode.py` — runnable offline prototype with demo and benchmark modes
+- `pseudocode.py` — runnable prototype with demo and benchmark modes
 
-## What improved vs the first runnable version
+## Embedding modes
 
-### 1. Better quantization
-The prototype now uses **per-dimension calibrated quantization** instead of one global clip range.
+### 1. Mock mode
+- fully offline
+- deterministic
+- good for quick architecture testing
 
-That means:
-- each dimension gets its own clip range from corpus statistics
-- saturation is reduced
-- approximate scoring is more faithful
-- compressed candidate quality is more production-like
+### 2. OpenAI mode
+- real embeddings via the OpenAI embeddings API
+- cached locally on disk to avoid repeated API calls
 
-### 2. Better offline embeddings
-The mock embedder is still local and deterministic, but now includes:
-- token features
-- bigram features
-- domain keyword boosts
-- lightweight lexical statistics
+## Environment variables for OpenAI mode
 
-So the retrieval benchmark is less toy-like.
+Required:
 
-### 3. Better benchmark output
-The benchmark now reports:
-- candidate recall@k
-- final recall@k
-- candidate recall@n_candidates
-- compression ratio
-- quantization alpha summary
-- saturation diagnostics
+```bash
+export OPENAI_API_KEY="your_api_key_here"
+```
+
+Optional:
+
+```bash
+export OPENAI_EMBEDDING_MODEL="text-embedding-3-small"
+```
+
+Default model if not set:
+- `text-embedding-3-small`
+
+## Local embedding cache
+
+Embeddings are cached under:
+
+```text
+src/turbo-quant-agent-memory/.cache/embeddings/
+```
+
+Cache key depends on:
+- provider
+- model
+- text
+
+So repeated runs with the same input should avoid extra API calls.
 
 ## Key MVP decisions
 
@@ -69,47 +84,60 @@ Why:
 - Python 3.10+ recommended
 - no external dependencies required
 
-## Run the demo
+## Run with mock embeddings
+
+Demo:
 
 ```bash
-python3 src/turbo-quant-agent-memory/pseudocode.py demo
+python3 src/turbo-quant-agent-memory/pseudocode.py demo --embedder mock
 ```
 
-4-bit demo:
+Benchmark:
 
 ```bash
-python3 src/turbo-quant-agent-memory/pseudocode.py demo --bits 4
+python3 src/turbo-quant-agent-memory/pseudocode.py benchmark --embedder mock --bits 8 --memories 1000 --queries 50 --k 10 --candidates 50
 ```
 
-The demo will:
-- build a small in-memory corpus
-- calibrate the quantizer
-- index memories
-- run sample queries
-- print:
-  - compressed-stage candidates
-  - final reranked results
-  - exact baseline results
+## Run with OpenAI embeddings
 
-## Run the benchmark
-
-Default:
+Demo:
 
 ```bash
-python3 src/turbo-quant-agent-memory/pseudocode.py benchmark
+export OPENAI_API_KEY="your_api_key_here"
+export OPENAI_EMBEDDING_MODEL="text-embedding-3-small"
+python3 src/turbo-quant-agent-memory/pseudocode.py demo --embedder openai --bits 8
 ```
 
-Example:
+Benchmark:
 
 ```bash
-python3 src/turbo-quant-agent-memory/pseudocode.py benchmark --bits 8 --memories 1000 --queries 50 --k 10 --candidates 50
+export OPENAI_API_KEY="your_api_key_here"
+export OPENAI_EMBEDDING_MODEL="text-embedding-3-small"
+python3 src/turbo-quant-agent-memory/pseudocode.py benchmark --embedder openai --bits 8 --memories 200 --queries 20 --k 10 --candidates 50
 ```
 
-4-bit example:
+### Important note
+Using OpenAI mode will make network requests and can incur API cost.
+Start with small corpus/query counts first.
 
-```bash
-python3 src/turbo-quant-agent-memory/pseudocode.py benchmark --bits 4 --memories 1000 --queries 50 --k 10 --candidates 75
-```
+## What improved vs the earlier version
+
+### 1. Better quantization
+- per-dimension calibrated clip ranges
+- lower saturation
+- better approximate scoring
+
+### 2. Better benchmark diagnostics
+Reports:
+- candidate recall@k
+- final recall@k
+- candidate recall@n_candidates
+- compression ratio
+- quantization alpha summary
+- saturation diagnostics
+
+### 3. Real embedding path
+The system can now test the same retrieval architecture with actual OpenAI embeddings.
 
 ## What to look for in benchmark results
 
@@ -122,29 +150,29 @@ How much exact rerank restores quality after compressed candidate generation.
 This is the most important MVP metric.
 
 ### Candidate recall@n_candidates
-A broader diagnostic that shows whether the shortlist is capturing the right neighborhood at all.
+A broader diagnostic showing whether the shortlist is capturing the right neighborhood.
 
 ### Compression ratio
 How much smaller the compressed index is than float32 normalized vectors.
 
 ### Saturation stats
-If saturation is high, clip ranges are too tight or the representation is poorly calibrated.
+If saturation is high, clip ranges are too tight or poorly calibrated.
 
 ## Recommended defaults
 
-- embedding dimension: `384` in the offline mock prototype
+- embedder: `mock` for offline development, `openai` for real testing
 - quantization bits: `8`
 - final results: `k=10`
 - shortlist size: `50`
 
 ## What this prototype is for
 
-This prototype is for validating the architecture question:
+This prototype validates the architecture question:
 
 > Can a compressed shadow index reduce storage cost while preserving retrieval quality well enough through exact reranking?
 
 If yes, the next steps are:
-- plug in a real embedding model
-- add persistence
 - benchmark on real memory/query data
+- add persistence for indexed corpora
+- separate ingestion from retrieval
 - only then consider TurboQuant-style transforms or residual correction
