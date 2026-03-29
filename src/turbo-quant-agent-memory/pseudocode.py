@@ -1,12 +1,17 @@
 """
-Runnable minimal prototype for a compressed agent memory MVP.
+Runnable compressed agent memory MVP prototype.
 
-Design:
-- full-precision normalized vectors are kept for exact rerank
-- compressed vectors are used for candidate generation
-- exact rerank is the correction layer
+Upgraded version:
+- full-precision normalized vectors kept for exact rerank
+- compressed shadow index used for candidate generation
+- corpus-calibrated per-dimension quantization
+- richer offline embedding provider
+- more informative benchmark output
 
-No external APIs. No dependencies beyond Python standard library.
+Still intentionally simple:
+- standard library only
+- no external APIs
+- no random rotation / QJL
 """
 
 from __future__ import annotations
@@ -18,6 +23,7 @@ import hashlib
 import heapq
 import math
 import random
+import statistics
 import sys
 
 
@@ -48,10 +54,8 @@ class EmbeddingRecord:
 class QuantizedRecord:
     memory_id: str
     quant_bits: int
-    clip_alpha: float
     quant_scheme: str
     packed_codes: bytes
-    dequant_scale: float
     embedding_dim: int
     saturation_rate: float = 0.0
 
@@ -88,21 +92,32 @@ def clip(value: float, lo: float, hi: float) -> float:
 
 
 # -----------------------------------------------------------------------------
-# Mock embedding provider
+# Offline embedding provider
 # -----------------------------------------------------------------------------
 
 class MockEmbeddingProvider:
     """
-    Deterministic offline embedder.
+    Deterministic local embedder with a bit more structure than a raw hash bag.
 
-    It mixes:
-    - hashed token buckets
-    - a few simple lexical signals
+    Ingredients:
+    - hashed token bucket features
+    - word + bigram features
+    - domain keyword boosts
+    - a few lightweight lexical statistics
 
-    Good enough for a local MVP demo and benchmark.
+    It is still a toy, but it behaves better for retrieval than the earlier version.
     """
 
-    def __init__(self, model_name: str = "mock-hash-embedder", dim: int = 256):
+    DOMAIN_KEYWORDS = {
+        "quantization": ["quantization", "quant", "compression", "compressed", "scalar"],
+        "memory": ["memory", "recall", "context", "episodic", "semantic"],
+        "retrieval": ["retrieval", "search", "rerank", "candidate", "nearest"],
+        "llm": ["llm", "kv", "cache", "attention", "inference"],
+        "blockchain": ["blockchain", "wallet", "transaction", "protocol", "risk"],
+        "agent": ["agent", "tool", "planner", "autonomy", "task"],
+    }
+
+    def __init__(self, model_name: str = "mock-hash-embedder-v2", dim: int = 384):
         self.model_name = model_name
         self.dim = dim
 
@@ -114,76 +129,160 @@ class MockEmbeddingProvider:
         if not tokens:
             return vec
 
-        # hashed bag-of-words with signed updates
+        # word features
         for token in tokens:
-            digest = hashlib.sha256(token.encode("utf-8")).digest()
-            idx1 = int.from_bytes(digest[0:4], "big") % self.dim
-            idx2 = int.from_bytes(digest[4:8], "big") % self.dim
-            sign1 = 1.0 if digest[8] % 2 == 0 else -1.0
-            sign2 = 1.0 if digest[9] % 2 == 0 else -1.0
-            strength = 1.0 + (len(token) % 5) * 0.05
-            vec[idx1] += sign1 * strength
-            vec[idx2] += sign2 * 0.6 * strength
+            self._signed_hash_add(vec, f"w:{token}", 1.0)
+            if len(token) > 4:
+                self._signed_hash_add(vec, f"stem:{token[:5]}", 0.35)
 
-        # simple lexical features in the tail
-        vec[0] += len(tokens) / 20.0
-        vec[1] += sum(c.isdigit() for c in lowered) / 10.0
-        vec[2] += lowered.count("blockchain") * 0.8
-        vec[3] += lowered.count("agent") * 0.8
-        vec[4] += lowered.count("memory") * 0.8
-        vec[5] += lowered.count("quant") * 0.8
-        vec[6] += lowered.count("retrieval") * 0.8
-        vec[7] += lowered.count("cache") * 0.8
+        # bigram features help phrase-level retrieval
+        for i in range(len(tokens) - 1):
+            bigram = tokens[i] + "_" + tokens[i + 1]
+            self._signed_hash_add(vec, f"b:{bigram}", 0.65)
+
+        # domain boosts
+        for group_idx, (_group, words) in enumerate(self.DOMAIN_KEYWORDS.items()):
+            count = sum(lowered.count(word) for word in words)
+            if count:
+                vec[group_idx] += 1.25 * count
+                self._signed_hash_add(vec, f"domain:{_group}", 0.9 * count)
+
+        # lexical statistics
+        vec[20] += len(tokens) / 30.0
+        vec[21] += len(set(tokens)) / max(1, len(tokens))
+        vec[22] += sum(ch.isdigit() for ch in lowered) / 10.0
+        vec[23] += lowered.count("-") / 5.0
 
         return vec
 
+    def _signed_hash_add(self, vec: List[float], key: str, weight: float) -> None:
+        digest = hashlib.sha256(key.encode("utf-8")).digest()
+        idx1 = int.from_bytes(digest[0:4], "big") % self.dim
+        idx2 = int.from_bytes(digest[4:8], "big") % self.dim
+        idx3 = int.from_bytes(digest[8:12], "big") % self.dim
+        sign1 = 1.0 if digest[12] % 2 == 0 else -1.0
+        sign2 = 1.0 if digest[13] % 2 == 0 else -1.0
+        sign3 = 1.0 if digest[14] % 2 == 0 else -1.0
+        vec[idx1] += sign1 * weight
+        vec[idx2] += sign2 * weight * 0.5
+        vec[idx3] += sign3 * weight * 0.25
+
     @staticmethod
     def _tokenize(text: str) -> List[str]:
-        cleaned = []
-        token = []
+        out = []
+        cur = []
         for ch in text:
             if ch.isalnum() or ch in {"-", "_"}:
-                token.append(ch)
+                cur.append(ch)
             else:
-                if token:
-                    cleaned.append("".join(token))
-                    token = []
-        if token:
-            cleaned.append("".join(token))
-        return cleaned
+                if cur:
+                    out.append("".join(cur))
+                    cur = []
+        if cur:
+            out.append("".join(cur))
+        return out
 
 
 # -----------------------------------------------------------------------------
-# Quantizer
+# Corpus-calibrated quantizer
 # -----------------------------------------------------------------------------
 
-class ScalarQuantizer:
-    def __init__(self, bits: int = 8, clip_alpha: float = 0.25):
+class CalibratedScalarQuantizer:
+    """
+    Per-dimension symmetric scalar quantizer.
+
+    Improvement over the naive prototype:
+    - each dimension gets its own clip range based on observed corpus values
+    - quantization is calibrated from actual normalized embeddings
+    - approximate scoring can use per-dimension dequantization
+    """
+
+    def __init__(self, bits: int = 8, default_alpha: float = 0.25):
         if bits not in (4, 8):
             raise ValueError("Only 4-bit and 8-bit modes are supported")
         self.bits = bits
-        self.clip_alpha = clip_alpha
         self.levels = 2 ** bits
         self.max_int = self.levels - 1
-        self.step = (2.0 * clip_alpha) / self.max_int
+        self.default_alpha = default_alpha
+        self.alphas: Optional[List[float]] = None
+        self.steps: Optional[List[float]] = None
 
-    def quantize_vector(self, vec: List[float]) -> Tuple[bytes, float, float]:
+    def fit(self, vectors: List[List[float]]) -> None:
+        if not vectors:
+            raise ValueError("Need at least one vector to calibrate quantizer")
+
+        dim = len(vectors[0])
+        alphas = []
+        steps = []
+
+        for j in range(dim):
+            values = [abs(v[j]) for v in vectors]
+            if not values:
+                alpha = self.default_alpha
+            else:
+                # use a robust-ish high percentile approximation from sorted values
+                ordered = sorted(values)
+                idx = min(len(ordered) - 1, max(0, int(0.98 * (len(ordered) - 1))))
+                alpha = max(ordered[idx], self.default_alpha / 8.0)
+                alpha = min(alpha, 1.0)
+            alphas.append(alpha)
+            steps.append((2.0 * alpha) / self.max_int)
+
+        self.alphas = alphas
+        self.steps = steps
+
+    def is_fit(self) -> bool:
+        return self.alphas is not None and self.steps is not None
+
+    def quantize_vector(self, vec: List[float]) -> Tuple[bytes, float]:
+        if not self.is_fit():
+            raise RuntimeError("Quantizer must be fit before use")
+
         codes: List[int] = []
         saturated = 0
+        assert self.alphas is not None and self.steps is not None
 
-        for x in vec:
-            x_clipped = clip(x, -self.clip_alpha, self.clip_alpha)
+        for x, alpha, step in zip(vec, self.alphas, self.steps):
+            x_clipped = clip(x, -alpha, alpha)
             if x_clipped != x:
                 saturated += 1
-            q = round((x_clipped + self.clip_alpha) / self.step)
+            q = round((x_clipped + alpha) / step)
             q = max(0, min(self.max_int, int(q)))
             codes.append(q)
 
-        return self.pack_codes(codes), self.step, saturated / max(1, len(vec))
+        return self.pack_codes(codes), saturated / max(1, len(vec))
 
     def dequantize_vector(self, packed_codes: bytes, dim: int) -> List[float]:
+        if not self.is_fit():
+            raise RuntimeError("Quantizer must be fit before use")
+        assert self.alphas is not None and self.steps is not None
+
         codes = self.unpack_codes(packed_codes, dim)
-        return [-self.clip_alpha + q * self.step for q in codes]
+        out = []
+        for q, alpha, step in zip(codes, self.alphas, self.steps):
+            out.append(-alpha + q * step)
+        return out
+
+    def score_query_against_codes(self, query_vec: List[float], packed_codes: bytes, dim: int) -> float:
+        """
+        Approximate score via implicit dequantization.
+        Still simple, but clearer and calibrated.
+        """
+        if not self.is_fit():
+            raise RuntimeError("Quantizer must be fit before use")
+        assert self.alphas is not None and self.steps is not None
+
+        codes = self.unpack_codes(packed_codes, dim)
+        score = 0.0
+        for qx, q, alpha, step in zip(query_vec, codes, self.alphas, self.steps):
+            approx_x = -alpha + q * step
+            score += qx * approx_x
+        return score
+
+    def average_alpha(self) -> float:
+        if not self.alphas:
+            return self.default_alpha
+        return sum(self.alphas) / len(self.alphas)
 
     def pack_codes(self, codes: List[int]) -> bytes:
         if self.bits == 8:
@@ -237,7 +336,7 @@ class MemoryStore:
 # -----------------------------------------------------------------------------
 
 class MemoryIndexer:
-    def __init__(self, store: MemoryStore, embedder: MockEmbeddingProvider, quantizer: ScalarQuantizer):
+    def __init__(self, store: MemoryStore, embedder: MockEmbeddingProvider, quantizer: CalibratedScalarQuantizer):
         self.store = store
         self.embedder = embedder
         self.quantizer = quantizer
@@ -267,19 +366,28 @@ class MemoryIndexer:
             )
         )
 
-        packed_codes, scale, saturation_rate = self.quantizer.quantize_vector(normalized)
-        self.store.put_quantized(
-            QuantizedRecord(
-                memory_id=memory_id,
-                quant_bits=self.quantizer.bits,
-                clip_alpha=self.quantizer.clip_alpha,
-                quant_scheme="symmetric_uniform_global",
-                packed_codes=packed_codes,
-                dequant_scale=scale,
-                embedding_dim=len(normalized),
-                saturation_rate=saturation_rate,
+    def rebuild_quantized_index(self) -> None:
+        ids = self.store.memory_ids()
+        if not ids:
+            return
+
+        normalized_vectors = [self.store.embeddings[mid].normalized_f32 for mid in ids]
+        self.quantizer.fit(normalized_vectors)
+
+        self.store.quantized = {}
+        for memory_id in ids:
+            emb = self.store.embeddings[memory_id]
+            packed_codes, saturation_rate = self.quantizer.quantize_vector(emb.normalized_f32)
+            self.store.put_quantized(
+                QuantizedRecord(
+                    memory_id=memory_id,
+                    quant_bits=self.quantizer.bits,
+                    quant_scheme="symmetric_uniform_per_dim_calibrated",
+                    packed_codes=packed_codes,
+                    embedding_dim=emb.embedding_dim,
+                    saturation_rate=saturation_rate,
+                )
             )
-        )
 
 
 # -----------------------------------------------------------------------------
@@ -287,7 +395,7 @@ class MemoryIndexer:
 # -----------------------------------------------------------------------------
 
 class MemoryRetriever:
-    def __init__(self, store: MemoryStore, embedder: MockEmbeddingProvider, quantizer: ScalarQuantizer):
+    def __init__(self, store: MemoryStore, embedder: MockEmbeddingProvider, quantizer: CalibratedScalarQuantizer):
         self.store = store
         self.embedder = embedder
         self.quantizer = quantizer
@@ -319,8 +427,7 @@ class MemoryRetriever:
         heap: List[Tuple[float, str]] = []
         for memory_id in self.store.memory_ids():
             qrec = self.store.quantized[memory_id]
-            approx_vec = self.quantizer.dequantize_vector(qrec.packed_codes, qrec.embedding_dim)
-            approx_score = dot(query_normed, approx_vec)
+            approx_score = self.quantizer.score_query_against_codes(query_normed, qrec.packed_codes, qrec.embedding_dim)
             if len(heap) < n_candidates:
                 heapq.heappush(heap, (approx_score, memory_id))
             elif approx_score > heap[0][0]:
@@ -347,13 +454,13 @@ class MemoryRetriever:
 
 
 # -----------------------------------------------------------------------------
-# Demo / benchmark helpers
+# Demo + benchmark helpers
 # -----------------------------------------------------------------------------
 
-def build_system(bits: int = 8, dim: int = 256, clip_alpha: float = 0.25):
+def build_system(bits: int = 8, dim: int = 384):
     store = MemoryStore()
     embedder = MockEmbeddingProvider(dim=dim)
-    quantizer = ScalarQuantizer(bits=bits, clip_alpha=clip_alpha)
+    quantizer = CalibratedScalarQuantizer(bits=bits)
     indexer = MemoryIndexer(store, embedder, quantizer)
     retriever = MemoryRetriever(store, embedder, quantizer)
     return store, embedder, quantizer, indexer, retriever
@@ -361,35 +468,42 @@ def build_system(bits: int = 8, dim: int = 256, clip_alpha: float = 0.25):
 
 def load_demo_memories(indexer: MemoryIndexer) -> None:
     memories = [
-        ("m1", "TurboQuant paper proposes random rotation and scalar quantization for vector compression"),
-        ("m2", "Agent memory MVP should use full precision embeddings and compressed shadow index"),
-        ("m3", "KV cache quantization can reduce memory bandwidth for long context inference"),
-        ("m4", "Blockchain agent should track wallets, transactions, and protocol risk"),
-        ("m5", "Use exact reranking after approximate compressed retrieval to restore ranking quality"),
-        ("m6", "Nearest neighbor retrieval benefits from preserving inner products and cosine similarity"),
-        ("m7", "Research folder contains technical reports and condensed engineering notes"),
-        ("m8", "4-bit quantization is more aggressive, 8-bit is safer for retrieval quality"),
+        ("m1", "TurboQuant uses random rotation and scalar quantization for vector compression"),
+        ("m2", "Agent memory MVP keeps full precision embeddings and a compressed shadow index"),
+        ("m3", "KV cache quantization helps long context inference by reducing memory bandwidth"),
+        ("m4", "Blockchain agent should track wallets, transactions, protocol risk, and alerts"),
+        ("m5", "Exact reranking after compressed candidate retrieval restores final ranking quality"),
+        ("m6", "Nearest neighbor retrieval depends on cosine similarity and inner product preservation"),
+        ("m7", "Research notes discuss quantization, retrieval systems, and engineering tradeoffs"),
+        ("m8", "4-bit quantization is aggressive while 8-bit quantization is safer for recall"),
+        ("m9", "Agent memory architecture can use compressed indexing with exact rerank on top candidates"),
+        ("m10", "Vector search systems benefit from candidate generation followed by precise reranking"),
     ]
     for memory_id, content in memories:
         indexer.ingest_memory(memory_id, content)
+    indexer.rebuild_quantized_index()
 
 
 def print_results(title: str, results: List[SearchResult]) -> None:
     print(f"\n{title}")
     for i, r in enumerate(results, start=1):
-        exact_str = f" exact={r.exact_score:.4f}" if r.exact_score is not None else ""
-        print(f"{i:2d}. {r.memory_id} approx={r.approx_score:.4f}{exact_str} :: {r.content}")
+        exact = f" exact={r.exact_score:.4f}" if r.exact_score is not None else ""
+        print(f"{i:2d}. {r.memory_id} approx={r.approx_score:.4f}{exact} :: {r.content}")
 
 
 def run_demo(bits: int) -> None:
     _, _, quantizer, indexer, retriever = build_system(bits=bits)
     load_demo_memories(indexer)
 
-    print(f"Running demo with {quantizer.bits}-bit quantization, clip_alpha={quantizer.clip_alpha}")
+    print(
+        f"Running demo with {quantizer.bits}-bit calibrated quantization, "
+        f"avg_alpha={quantizer.average_alpha():.4f}"
+    )
+
     queries = [
         "compressed agent memory retrieval",
-        "kv cache and quantization for long context",
-        "blockchain transaction risk agent",
+        "kv cache quantization for long context",
+        "blockchain wallet transaction risk agent",
     ]
 
     for q in queries:
@@ -402,24 +516,31 @@ def run_demo(bits: int) -> None:
         print_results("Exact baseline:", exact)
 
 
-def generate_synthetic_corpus(indexer: MemoryIndexer, n: int, seed: int = 7) -> List[str]:
+def generate_synthetic_corpus(indexer: MemoryIndexer, n: int, seed: int = 7) -> None:
     random.seed(seed)
-    topics = [
-        ("quant", ["quantization", "compression", "embedding", "vector", "retrieval"]),
-        ("memory", ["agent", "memory", "context", "recall", "summary"]),
-        ("llm", ["llm", "kv", "cache", "attention", "latency"]),
-        ("blockchain", ["blockchain", "wallet", "transaction", "protocol", "risk"]),
-        ("search", ["nearest", "neighbor", "ann", "cosine", "index"]),
-    ]
-    ids = []
+    topics = {
+        "quant": ["quantization", "compression", "vector", "embedding", "scalar", "clip", "calibration"],
+        "memory": ["agent", "memory", "context", "recall", "summary", "episodic", "semantic"],
+        "llm": ["llm", "kv", "cache", "attention", "latency", "inference", "context"],
+        "blockchain": ["blockchain", "wallet", "transaction", "protocol", "risk", "bridge", "alert"],
+        "search": ["nearest", "neighbor", "rerank", "candidate", "cosine", "index", "retrieval"],
+    }
+    labels = list(topics.keys())
+
     for i in range(n):
-        label, words = random.choice(topics)
-        noise = random.sample(words, k=min(3, len(words)))
-        content = f"memory {i} about {label} with {' '.join(noise)} and note {random.randint(0, 999)}"
-        memory_id = f"syn_{i}"
-        indexer.ingest_memory(memory_id, content, memory_type=label)
-        ids.append(memory_id)
-    return ids
+        label = random.choice(labels)
+        words = topics[label]
+        chosen = random.sample(words, k=4)
+        noise_label = random.choice(labels)
+        noise_words = random.sample(topics[noise_label], k=2)
+        content = (
+            f"memory {i} about {label} systems with {' '.join(chosen)} "
+            f"and note {' '.join(noise_words)}"
+        )
+        indexer.ingest_memory(f"syn_{i}", content, memory_type=label)
+
+    indexer.rebuild_quantized_index()
+
 
 
 def recall_at_k(predicted: List[str], exact: List[str], k: int) -> float:
@@ -437,49 +558,65 @@ def estimate_index_bytes(store: MemoryStore) -> Tuple[int, int]:
     return float_bytes, compressed_bytes
 
 
+def quant_diagnostics(store: MemoryStore) -> Tuple[float, float, float]:
+    sats = [store.quantized[mid].saturation_rate for mid in store.memory_ids()]
+    if not sats:
+        return 0.0, 0.0, 0.0
+    return min(sats), statistics.mean(sats), max(sats)
+
+
+
 def run_benchmark(bits: int, n_memories: int, n_queries: int, k: int, n_candidates: int) -> None:
-    store, _, _, indexer, retriever = build_system(bits=bits)
+    store, _, quantizer, indexer, retriever = build_system(bits=bits)
     generate_synthetic_corpus(indexer, n_memories)
 
     query_topics = [
         "agent memory summary retrieval",
-        "vector quantization and compression",
+        "vector quantization and scalar compression",
         "kv cache attention latency",
         "blockchain wallet transaction risk",
-        "nearest neighbor cosine index",
+        "nearest neighbor cosine rerank index",
     ]
 
-    recalls_final = []
-    recalls_candidates = []
+    candidate_recalls_at_k = []
+    final_recalls_at_k = []
+    candidate_recalls_at_candidates = []
 
     for i in range(n_queries):
         query = query_topics[i % len(query_topics)] + f" sample {i}"
-        exact = retriever.exact_search(query, k=k)
+        exact_k = retriever.exact_search(query, k=k)
+        exact_c = retriever.exact_search(query, k=n_candidates)
         candidates = retriever.compressed_candidates(query, n_candidates=n_candidates)
         final = retriever.retrieve(query, k=k, n_candidates=n_candidates)
 
-        exact_ids = [r.memory_id for r in exact]
+        exact_ids_k = [r.memory_id for r in exact_k]
+        exact_ids_c = [r.memory_id for r in exact_c]
         candidate_ids = [r.memory_id for r in candidates]
         final_ids = [r.memory_id for r in final]
 
-        recalls_candidates.append(recall_at_k(candidate_ids, exact_ids, k))
-        recalls_final.append(recall_at_k(final_ids, exact_ids, k))
+        candidate_recalls_at_k.append(recall_at_k(candidate_ids, exact_ids_k, k))
+        final_recalls_at_k.append(recall_at_k(final_ids, exact_ids_k, k))
+        candidate_recalls_at_candidates.append(recall_at_k(candidate_ids, exact_ids_c, n_candidates))
 
     float_bytes, compressed_bytes = estimate_index_bytes(store)
     ratio = compressed_bytes / max(1, float_bytes)
+    sat_min, sat_mean, sat_max = quant_diagnostics(store)
 
     print("\nBenchmark results")
     print("-----------------")
-    print(f"memories:               {n_memories}")
-    print(f"queries:                {n_queries}")
-    print(f"bits:                   {bits}")
-    print(f"k:                      {k}")
-    print(f"n_candidates:           {n_candidates}")
-    print(f"avg candidate recall@k: {sum(recalls_candidates)/len(recalls_candidates):.4f}")
-    print(f"avg final recall@k:     {sum(recalls_final)/len(recalls_final):.4f}")
-    print(f"float index bytes:      {float_bytes}")
-    print(f"compressed index bytes: {compressed_bytes}")
-    print(f"compression ratio:      {ratio:.4f}")
+    print(f"memories:                     {n_memories}")
+    print(f"queries:                      {n_queries}")
+    print(f"bits:                         {bits}")
+    print(f"k:                            {k}")
+    print(f"n_candidates:                 {n_candidates}")
+    print(f"avg candidate recall@k:       {sum(candidate_recalls_at_k)/len(candidate_recalls_at_k):.4f}")
+    print(f"avg final recall@k:           {sum(final_recalls_at_k)/len(final_recalls_at_k):.4f}")
+    print(f"avg candidate recall@cand:    {sum(candidate_recalls_at_candidates)/len(candidate_recalls_at_candidates):.4f}")
+    print(f"float index bytes:            {float_bytes}")
+    print(f"compressed index bytes:       {compressed_bytes}")
+    print(f"compression ratio:            {ratio:.4f}")
+    print(f"quant avg alpha:              {quantizer.average_alpha():.4f}")
+    print(f"saturation rate min/mean/max: {sat_min:.4f} / {sat_mean:.4f} / {sat_max:.4f}")
 
 
 # -----------------------------------------------------------------------------
@@ -502,6 +639,7 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
     bench.add_argument("--candidates", type=int, default=50)
 
     return parser.parse_args(argv)
+
 
 
 def main(argv: List[str]) -> int:
