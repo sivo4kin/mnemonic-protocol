@@ -10,6 +10,7 @@ It is a compact prototype for testing a more production-shaped retrieval archite
 - use **exact rerank** as the correction layer
 - improve compressed retrieval with **corpus-calibrated per-dimension quantization**
 - support both **offline mock embeddings** and **real OpenAI embeddings**
+- support **real JSONL benchmark datasets** and **JSON result export**
 
 ## Files
 
@@ -59,31 +60,6 @@ Cache key depends on:
 - model
 - text
 
-So repeated runs with the same input should avoid extra API calls.
-
-## Key MVP decisions
-
-### Correction layer
-The MVP uses **exact reranking**, not residual sketches.
-
-Why:
-- much simpler to implement
-- preserves final ranking quality
-- keeps compression risk limited to shortlist recall
-- gives a clean baseline before adding more advanced correction methods
-
-### Quantization
-- default: **8-bit** calibrated scalar quantization
-- optional: **4-bit** mode for more aggressive compression
-- no random rotation
-- no QJL
-- no learned codebooks
-
-## Requirements
-
-- Python 3.10+ recommended
-- no external dependencies required
-
 ## Run with mock embeddings
 
 Demo:
@@ -116,19 +92,76 @@ export OPENAI_EMBEDDING_MODEL="text-embedding-3-small"
 python3 src/turbo-quant-agent-memory/pseudocode.py benchmark --embedder openai --bits 8 --memories 200 --queries 20 --k 10 --candidates 50
 ```
 
-### Important note
-Using OpenAI mode will make network requests and can incur API cost.
-Start with small corpus/query counts first.
+## Real dataset input (JSONL)
 
-## What improved vs the earlier version
+You can benchmark your own memory/query data.
 
-### 1. Better quantization
-- per-dimension calibrated clip ranges
-- lower saturation
-- better approximate scoring
+### Memory file format
+Each line is JSON with at least:
+- `memory_id`
+- `content`
 
-### 2. Better benchmark diagnostics
-Reports:
+Optional:
+- `memory_type`
+- `importance_score`
+- `tags`
+
+Example `memories.jsonl`:
+
+```jsonl
+{"memory_id":"m1","content":"TurboQuant paper summary about vector quantization","memory_type":"research","tags":["quantization","paper"]}
+{"memory_id":"m2","content":"Agent memory design note about compressed retrieval and reranking","memory_type":"design","importance_score":0.8}
+{"memory_id":"m3","content":"Blockchain monitoring memory about wallet risk and suspicious transactions"}
+```
+
+### Query file format
+Each line is JSON with at least:
+- `query`
+
+Optional:
+- `relevant_ids` (list of labeled relevant memory ids)
+
+Example `queries.jsonl`:
+
+```jsonl
+{"query":"compressed agent memory retrieval","relevant_ids":["m2"]}
+{"query":"vector quantization research","relevant_ids":["m1"]}
+{"query":"wallet transaction risk","relevant_ids":["m3"]}
+```
+
+### Benchmark behavior
+- if `relevant_ids` are present, benchmark uses those labels
+- if `relevant_ids` are absent, benchmark falls back to exact-search-as-baseline
+
+## Benchmarking a real dataset
+
+Example with OpenAI embeddings and JSON output:
+
+```bash
+export OPENAI_API_KEY="your_api_key_here"
+export OPENAI_EMBEDDING_MODEL="text-embedding-3-small"
+python3 src/turbo-quant-agent-memory/pseudocode.py benchmark \
+  --embedder openai \
+  --bits 8 \
+  --memory-file ./memories.jsonl \
+  --query-file ./queries.jsonl \
+  --k 10 \
+  --candidates 50 \
+  --out ./results.json
+```
+
+## JSON result export
+
+If `--out` is provided, the benchmark writes a JSON file containing:
+- benchmark config
+- dataset mode
+- judged/unjudged mode
+- metrics
+
+This makes it easier to compare runs later.
+
+## Metrics reported
+
 - candidate recall@k
 - final recall@k
 - candidate recall@n_candidates
@@ -136,21 +169,14 @@ Reports:
 - quantization alpha summary
 - saturation diagnostics
 
-### 3. Real embedding path
-The system can now test the same retrieval architecture with actual OpenAI embeddings.
-
-## What to look for in benchmark results
+## What to look for
 
 ### Candidate recall@k
-How many true top-k items are already present in the compressed shortlist.
-If this is weak, rerank cannot fully recover.
+How many true top-k items already show up in the compressed shortlist.
 
 ### Final recall@k
 How much exact rerank restores quality after compressed candidate generation.
 This is the most important MVP metric.
-
-### Candidate recall@n_candidates
-A broader diagnostic showing whether the shortlist is capturing the right neighborhood.
 
 ### Compression ratio
 How much smaller the compressed index is than float32 normalized vectors.

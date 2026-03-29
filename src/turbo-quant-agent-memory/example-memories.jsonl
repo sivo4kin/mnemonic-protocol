@@ -1,0 +1,3 @@
+{"memory_id":"m1","content":"TurboQuant paper summary about vector quantization and compression","memory_type":"research","tags":["quantization","paper"]}
+{"memory_id":"m2","content":"Agent memory design note about compressed retrieval and exact reranking","memory_type":"design","importance_score":0.8,"tags":["memory","retrieval"]}
+{"memory_id":"m3","content":"Blockchain monitoring memory about wallet risk and suspicious transactions","memory_type":"ops","tags":["blockchain","risk"]}

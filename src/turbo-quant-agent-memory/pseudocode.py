@@ -7,6 +7,8 @@ Features:
 - corpus-calibrated per-dimension quantization
 - supports both offline mock embeddings and real OpenAI embeddings
 - simple local embedding cache on disk
+- supports benchmarking from real JSONL datasets
+- supports JSON result export
 
 Still intentionally compact:
 - standard library only
@@ -15,7 +17,7 @@ Still intentionally compact:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, asdict, field
 from typing import List, Dict, Optional, Tuple
 from pathlib import Path
 import argparse
@@ -107,15 +109,13 @@ class EmbeddingCache:
         return self.cache_dir / f"{key}.json"
 
     def make_key(self, provider: str, model: str, text: str) -> str:
-        digest = hashlib.sha256(f"{provider}\n{model}\n{text}".encode("utf-8")).hexdigest()
-        return digest
+        return hashlib.sha256(f"{provider}\n{model}\n{text}".encode("utf-8")).hexdigest()
 
     def get(self, key: str) -> Optional[List[float]]:
         path = self._path_for_key(key)
         if not path.exists():
             return None
-        data = json.loads(path.read_text())
-        return data["embedding"]
+        return json.loads(path.read_text())["embedding"]
 
     def set(self, key: str, embedding: List[float]) -> None:
         path = self._path_for_key(key)
@@ -137,7 +137,6 @@ class BaseEmbeddingProvider:
     def embed_text(self, text: str) -> List[float]:
         if self.cache is None:
             return self._embed_uncached(text)
-
         key = self.cache.make_key(self.provider_name(), self.model_name, text)
         cached = self.cache.get(key)
         if cached is not None:
@@ -171,7 +170,6 @@ class MockEmbeddingProvider(BaseEmbeddingProvider):
         vec = [0.0] * self.dim
         lowered = text.lower()
         tokens = self._tokenize(lowered)
-
         if not tokens:
             return vec
 
@@ -181,8 +179,7 @@ class MockEmbeddingProvider(BaseEmbeddingProvider):
                 self._signed_hash_add(vec, f"stem:{token[:5]}", 0.35)
 
         for i in range(len(tokens) - 1):
-            bigram = tokens[i] + "_" + tokens[i + 1]
-            self._signed_hash_add(vec, f"b:{bigram}", 0.65)
+            self._signed_hash_add(vec, f"b:{tokens[i]}_{tokens[i + 1]}", 0.65)
 
         for group_idx, (group, words) in enumerate(self.DOMAIN_KEYWORDS.items()):
             count = sum(lowered.count(word) for word in words)
@@ -233,11 +230,7 @@ class OpenAIEmbeddingProvider(BaseEmbeddingProvider):
         return "openai"
 
     def _embed_uncached(self, text: str) -> List[float]:
-        payload = json.dumps({
-            "input": text,
-            "model": self.model_name,
-        }).encode("utf-8")
-
+        payload = json.dumps({"input": text, "model": self.model_name}).encode("utf-8")
         req = urllib.request.Request(
             url="https://api.openai.com/v1/embeddings",
             data=payload,
@@ -247,13 +240,11 @@ class OpenAIEmbeddingProvider(BaseEmbeddingProvider):
                 "Authorization": f"Bearer {self.api_key}",
             },
         )
-
         try:
             with urllib.request.urlopen(req, timeout=60) as resp:
                 body = resp.read().decode("utf-8")
         except Exception as e:
             raise RuntimeError(f"OpenAI embeddings request failed: {e}") from e
-
         try:
             data = json.loads(body)
             return data["data"][0]["embedding"]
@@ -392,7 +383,6 @@ class MemoryIndexer:
         tags = tags or []
         item = MemoryItem(memory_id, content, memory_type, importance_score, tags)
         self.store.put_item(item)
-
         full_embedding = self.embedder.embed_text(content)
         normalized, norm = normalize(full_embedding)
         self.store.put_embedding(
@@ -485,6 +475,31 @@ class MemoryRetriever:
 
 
 # -----------------------------------------------------------------------------
+# Dataset IO
+# -----------------------------------------------------------------------------
+
+def load_jsonl(path: Path) -> List[dict]:
+    rows = []
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        rows.append(json.loads(line))
+    return rows
+
+
+def ingest_memory_jsonl(indexer: MemoryIndexer, path: Path) -> None:
+    for row in load_jsonl(path):
+        memory_id = row["memory_id"]
+        content = row["content"]
+        memory_type = row.get("memory_type", "episodic")
+        importance_score = float(row.get("importance_score", 0.0))
+        tags = row.get("tags", [])
+        indexer.ingest_memory(memory_id, content, memory_type=memory_type, importance_score=importance_score, tags=tags)
+    indexer.rebuild_quantized_index()
+
+
+# -----------------------------------------------------------------------------
 # Demo + benchmark helpers
 # -----------------------------------------------------------------------------
 
@@ -540,18 +555,12 @@ def print_results(title: str, results: List[SearchResult]) -> None:
 def run_demo(bits: int, embedder_name: str) -> None:
     _, embedder, quantizer, indexer, retriever = build_system(bits=bits, embedder_name=embedder_name)
     load_demo_memories(indexer)
-
-    print(
-        f"Running demo with embedder={embedder.provider_name()} model={embedder.model_name} "
-        f"bits={quantizer.bits} avg_alpha={quantizer.average_alpha():.4f}"
-    )
-
+    print(f"Running demo with embedder={embedder.provider_name()} model={embedder.model_name} bits={quantizer.bits} avg_alpha={quantizer.average_alpha():.4f}")
     queries = [
         "compressed agent memory retrieval",
         "kv cache quantization for long context",
         "blockchain wallet transaction risk agent",
     ]
-
     for q in queries:
         print(f"\nQUERY: {q}")
         compressed = retriever.compressed_candidates(q, n_candidates=5)
@@ -605,58 +614,141 @@ def quant_diagnostics(store: MemoryStore) -> Tuple[float, float, float]:
     return min(sats), statistics.mean(sats), max(sats)
 
 
-def run_benchmark(bits: int, embedder_name: str, n_memories: int, n_queries: int, k: int, n_candidates: int) -> None:
-    store, embedder, quantizer, indexer, retriever = build_system(bits=bits, embedder_name=embedder_name)
-    generate_synthetic_corpus(indexer, n_memories)
+def evaluate_query_with_labels(retriever: MemoryRetriever, query: str, relevant_ids: List[str], k: int, n_candidates: int) -> Tuple[float, float, float]:
+    candidates = retriever.compressed_candidates(query, n_candidates=n_candidates)
+    final = retriever.retrieve(query, k=k, n_candidates=n_candidates)
+    candidate_ids = [r.memory_id for r in candidates]
+    final_ids = [r.memory_id for r in final]
+    candidate_recall_k = recall_at_k(candidate_ids, relevant_ids, k)
+    final_recall_k = recall_at_k(final_ids, relevant_ids, k)
+    candidate_recall_c = recall_at_k(candidate_ids, relevant_ids, min(n_candidates, len(relevant_ids) or n_candidates))
+    return candidate_recall_k, final_recall_k, candidate_recall_c
 
-    query_topics = [
-        "agent memory summary retrieval",
-        "vector quantization and scalar compression",
-        "kv cache attention latency",
-        "blockchain wallet transaction risk",
-        "nearest neighbor cosine rerank index",
-    ]
+
+def write_json_output(path: Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2))
+
+
+def run_benchmark(
+    bits: int,
+    embedder_name: str,
+    n_memories: int,
+    n_queries: int,
+    k: int,
+    n_candidates: int,
+    memory_file: Optional[Path] = None,
+    query_file: Optional[Path] = None,
+    out_file: Optional[Path] = None,
+) -> None:
+    store, embedder, quantizer, indexer, retriever = build_system(bits=bits, embedder_name=embedder_name)
+
+    query_rows: List[dict]
+    dataset_mode: str
+
+    if memory_file is not None:
+        ingest_memory_jsonl(indexer, memory_file)
+        dataset_mode = "jsonl"
+    else:
+        generate_synthetic_corpus(indexer, n_memories)
+        dataset_mode = "synthetic"
+
+    if query_file is not None:
+        query_rows = load_jsonl(query_file)
+    else:
+        query_topics = [
+            "agent memory summary retrieval",
+            "vector quantization and scalar compression",
+            "kv cache attention latency",
+            "blockchain wallet transaction risk",
+            "nearest neighbor cosine rerank index",
+        ]
+        query_rows = [{"query": query_topics[i % len(query_topics)] + f" sample {i}"} for i in range(n_queries)]
 
     candidate_recalls_at_k = []
     final_recalls_at_k = []
     candidate_recalls_at_candidates = []
+    judged_mode = False
 
-    for i in range(n_queries):
-        query = query_topics[i % len(query_topics)] + f" sample {i}"
-        exact_k = retriever.exact_search(query, k=k)
-        exact_c = retriever.exact_search(query, k=n_candidates)
-        candidates = retriever.compressed_candidates(query, n_candidates=n_candidates)
-        final = retriever.retrieve(query, k=k, n_candidates=n_candidates)
+    for row in query_rows[:n_queries]:
+        query = row["query"]
+        relevant_ids = row.get("relevant_ids")
 
-        exact_ids_k = [r.memory_id for r in exact_k]
-        exact_ids_c = [r.memory_id for r in exact_c]
-        candidate_ids = [r.memory_id for r in candidates]
-        final_ids = [r.memory_id for r in final]
-
-        candidate_recalls_at_k.append(recall_at_k(candidate_ids, exact_ids_k, k))
-        final_recalls_at_k.append(recall_at_k(final_ids, exact_ids_k, k))
-        candidate_recalls_at_candidates.append(recall_at_k(candidate_ids, exact_ids_c, n_candidates))
+        if relevant_ids:
+            judged_mode = True
+            c_k, f_k, c_c = evaluate_query_with_labels(retriever, query, relevant_ids, k, n_candidates)
+            candidate_recalls_at_k.append(c_k)
+            final_recalls_at_k.append(f_k)
+            candidate_recalls_at_candidates.append(c_c)
+        else:
+            exact_k = retriever.exact_search(query, k=k)
+            exact_c = retriever.exact_search(query, k=n_candidates)
+            candidates = retriever.compressed_candidates(query, n_candidates=n_candidates)
+            final = retriever.retrieve(query, k=k, n_candidates=n_candidates)
+            exact_ids_k = [r.memory_id for r in exact_k]
+            exact_ids_c = [r.memory_id for r in exact_c]
+            candidate_ids = [r.memory_id for r in candidates]
+            final_ids = [r.memory_id for r in final]
+            candidate_recalls_at_k.append(recall_at_k(candidate_ids, exact_ids_k, k))
+            final_recalls_at_k.append(recall_at_k(final_ids, exact_ids_k, k))
+            candidate_recalls_at_candidates.append(recall_at_k(candidate_ids, exact_ids_c, n_candidates))
 
     float_bytes, compressed_bytes = estimate_index_bytes(store)
     ratio = compressed_bytes / max(1, float_bytes)
     sat_min, sat_mean, sat_max = quant_diagnostics(store)
 
+    metrics = {
+        "avg_candidate_recall_at_k": sum(candidate_recalls_at_k) / len(candidate_recalls_at_k),
+        "avg_final_recall_at_k": sum(final_recalls_at_k) / len(final_recalls_at_k),
+        "avg_candidate_recall_at_candidates": sum(candidate_recalls_at_candidates) / len(candidate_recalls_at_candidates),
+        "float_index_bytes": float_bytes,
+        "compressed_index_bytes": compressed_bytes,
+        "compression_ratio": ratio,
+        "quant_avg_alpha": quantizer.average_alpha(),
+        "saturation_rate_min": sat_min,
+        "saturation_rate_mean": sat_mean,
+        "saturation_rate_max": sat_max,
+    }
+
+    result = {
+        "config": {
+            "embedder": embedder.provider_name(),
+            "model": embedder.model_name,
+            "bits": bits,
+            "k": k,
+            "n_candidates": n_candidates,
+            "dataset_mode": dataset_mode,
+            "judged_mode": judged_mode,
+            "memory_file": str(memory_file) if memory_file else None,
+            "query_file": str(query_file) if query_file else None,
+            "num_memories": len(store.memory_ids()),
+            "num_queries": min(len(query_rows), n_queries),
+        },
+        "metrics": metrics,
+    }
+
     print("\nBenchmark results")
     print("-----------------")
-    print(f"embedder:                     {embedder.provider_name()} ({embedder.model_name})")
-    print(f"memories:                     {n_memories}")
-    print(f"queries:                      {n_queries}")
+    print(f"embedder:                     {result['config']['embedder']} ({result['config']['model']})")
+    print(f"dataset mode:                 {dataset_mode}")
+    print(f"judged mode:                  {judged_mode}")
+    print(f"memories:                     {result['config']['num_memories']}")
+    print(f"queries:                      {result['config']['num_queries']}")
     print(f"bits:                         {bits}")
     print(f"k:                            {k}")
     print(f"n_candidates:                 {n_candidates}")
-    print(f"avg candidate recall@k:       {sum(candidate_recalls_at_k)/len(candidate_recalls_at_k):.4f}")
-    print(f"avg final recall@k:           {sum(final_recalls_at_k)/len(final_recalls_at_k):.4f}")
-    print(f"avg candidate recall@cand:    {sum(candidate_recalls_at_candidates)/len(candidate_recalls_at_candidates):.4f}")
+    print(f"avg candidate recall@k:       {metrics['avg_candidate_recall_at_k']:.4f}")
+    print(f"avg final recall@k:           {metrics['avg_final_recall_at_k']:.4f}")
+    print(f"avg candidate recall@cand:    {metrics['avg_candidate_recall_at_candidates']:.4f}")
     print(f"float index bytes:            {float_bytes}")
     print(f"compressed index bytes:       {compressed_bytes}")
     print(f"compression ratio:            {ratio:.4f}")
-    print(f"quant avg alpha:              {quantizer.average_alpha():.4f}")
+    print(f"quant avg alpha:              {metrics['quant_avg_alpha']:.4f}")
     print(f"saturation rate min/mean/max: {sat_min:.4f} / {sat_mean:.4f} / {sat_max:.4f}")
+
+    if out_file is not None:
+        write_json_output(out_file, result)
+        print(f"results written to:           {out_file}")
 
 
 # -----------------------------------------------------------------------------
@@ -672,13 +764,16 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
     demo.add_argument("--bits", type=int, default=8, choices=[4, 8])
     demo.add_argument("--embedder", type=str, default="mock", choices=["mock", "openai"])
 
-    bench = sub.add_parser("benchmark", help="run synthetic benchmark")
+    bench = sub.add_parser("benchmark", help="run benchmark")
     bench.add_argument("--bits", type=int, default=8, choices=[4, 8])
     bench.add_argument("--embedder", type=str, default="mock", choices=["mock", "openai"])
     bench.add_argument("--memories", type=int, default=1000)
     bench.add_argument("--queries", type=int, default=50)
     bench.add_argument("--k", type=int, default=10)
     bench.add_argument("--candidates", type=int, default=50)
+    bench.add_argument("--memory-file", type=Path, default=None)
+    bench.add_argument("--query-file", type=Path, default=None)
+    bench.add_argument("--out", type=Path, default=None)
 
     return parser.parse_args(argv)
 
@@ -700,6 +795,9 @@ def main(argv: List[str]) -> int:
             n_queries=args.queries,
             k=args.k,
             n_candidates=args.candidates,
+            memory_file=args.memory_file,
+            query_file=args.query_file,
+            out_file=args.out,
         )
         return 0
 
