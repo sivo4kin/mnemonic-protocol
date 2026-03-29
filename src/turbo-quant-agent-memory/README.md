@@ -1,49 +1,109 @@
 # turbo-quant-agent-memory
 
-Minimal MVP design package for a **TurboQuant-inspired agent memory system**.
+Minimal runnable MVP prototype for a **TurboQuant-inspired agent memory system**.
 
-This is **not** a full TurboQuant implementation.
-It is a pragmatic first version focused on:
-- full-precision embeddings as source of truth
-- compressed shadow index for cheap candidate generation
-- exact rerank as the correction layer
+This is **not** full TurboQuant.
+It is the simplest useful architecture for testing compressed memory retrieval:
 
-## What’s in here
+- keep **full-precision embeddings** as source of truth
+- build a **compressed shadow index**
+- use **exact rerank** as the correction layer
+
+## Files
 
 - `MVP_SPEC.md` — goals, non-goals, success criteria, milestones, metrics
 - `ARCHITECTURE.md` — ingestion flow, storage layers, retrieval cascade, future extensions
 - `SCHEMA.md` — suggested data model for memory records, embeddings, and quantized index
-- `pseudocode.py` — implementation-oriented Python skeleton for ingest / quantize / retrieve / rerank
+- `pseudocode.py` — runnable offline prototype with demo and benchmark modes
 
-## MVP summary
+## Key MVP decisions
 
-### Core idea
-Use a 2-stage retrieval pipeline:
-1. search broad memory corpus using compressed vectors
-2. rerank shortlisted candidates using exact vectors
+### Correction layer
+The MVP uses **exact reranking**, not residual sketches.
 
-### Why this shape
-It is the smallest useful system that tests whether compressed memory retrieval is worth deeper investment.
+Why:
+- much simpler to implement
+- preserves final ranking quality
+- keeps compression risk limited to shortlist recall
+- gives a clean baseline before adding more advanced correction methods
 
-### Explicit non-goals
+### Quantization
+- default: **8-bit** symmetric scalar quantization
+- optional: **4-bit** mode for more aggressive compression
 - no random rotation
-- no residual QJL
+- no QJL
 - no learned codebooks
-- no production serving stack
+
+## Requirements
+
+- Python 3.10+ recommended
+- no external dependencies required
+
+## Run the demo
+
+From the workspace root or this folder:
+
+```bash
+python3 src/turbo-quant-agent-memory/pseudocode.py demo
+```
+
+Or with 4-bit mode:
+
+```bash
+python3 src/turbo-quant-agent-memory/pseudocode.py demo --bits 4
+```
+
+The demo will:
+- build a small in-memory corpus
+- index it
+- run sample queries
+- print:
+  - compressed-stage candidates
+  - final reranked results
+  - exact baseline results
+
+## Run the benchmark
+
+Default benchmark:
+
+```bash
+python3 src/turbo-quant-agent-memory/pseudocode.py benchmark
+```
+
+Custom example:
+
+```bash
+python3 src/turbo-quant-agent-memory/pseudocode.py benchmark --bits 8 --memories 2000 --queries 100 --k 10 --candidates 50
+```
+
+4-bit example:
+
+```bash
+python3 src/turbo-quant-agent-memory/pseudocode.py benchmark --bits 4 --memories 2000 --queries 100 --k 10 --candidates 75
+```
+
+The benchmark reports:
+- average candidate recall@k
+- average final recall@k
+- rough float vs compressed index size
+- compression ratio
 
 ## Recommended defaults
 
-- embedding model: `text-embedding-3-small`
-- embedding dimension: `1536`
-- quantization: `8-bit` symmetric scalar quantization
-- experimental mode: `4-bit`
+- embedding dimension: `256` in the offline mock prototype
+- quantization bits: `8`
+- clip range: `0.25`
 - final results: `k=10`
-- shortlist size: `n_candidates=50`
+- shortlist size: `50`
 
-## What to build next
+## What this prototype is for
 
-1. Hook `pseudocode.py` to a real embedding provider
-2. Add persistence (SQLite / Postgres / local files)
-3. Benchmark exact vs compressed+rerank retrieval
-4. Test 8-bit as baseline, 4-bit as aggressive compression
-5. Only after that, consider TurboQuant-style phase-2 upgrades
+This prototype is for validating the product/architecture question:
+
+> Can a compressed shadow index reduce storage cost while preserving retrieval quality well enough through exact reranking?
+
+If yes, the next steps are:
+- plug in a real embedding model
+- add persistence
+- benchmark on real memory/query data
+- then consider TurboQuant-style upgrades
