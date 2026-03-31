@@ -83,20 +83,31 @@ Stores the compressed shadow representation.
 | `memory_id` | string / UUID | yes | FK to `memory_items` |
 | `quant_version` | integer | yes | Version of quantization logic |
 | `quant_bits` | integer | yes | `4` or `8` |
-| `clip_alpha` | float | yes | Symmetric clip range |
-| `quant_scheme` | string | yes | e.g. `symmetric_uniform_global` |
+| `quant_scheme` | string | yes | e.g. `symmetric_uniform_per_dim_calibrated` |
 | `embedding_dim` | integer | yes | Must match original dim |
 | `packed_codes` | blob | yes | Packed quantized values |
-| `dequant_scale` | float | yes | Scale used for decode |
 | `saturation_rate` | float | no | Fraction clipped at boundaries |
 | `created_at` | timestamp | yes | Created time |
 | `updated_at` | timestamp | yes | Last re-quantized time |
 
+### Quantizer state (stored separately, not per record)
+
+The current implementation uses per-dimension calibration. The quantizer state
+must be stored alongside the index, not per record:
+
+| Field | Type | Notes |
+|---|---|---|
+| `alphas` | float array | Per-dimension clip ranges, length = embedding_dim |
+| `steps` | float array | Per-dimension bin widths, length = embedding_dim |
+| `bits` | integer | 4 or 8 |
+| `default_alpha` | float | Fallback floor for alpha calibration |
+
 ### Notes
 - `packed_codes` is the main compressed representation.
 - For 4-bit mode, pack two values per byte.
-- `dequant_scale` may be enough to reconstruct approximate float values.
-- `clip_alpha` should be logged explicitly so quantization is reproducible.
+- Dequantization requires the quantizer's `alphas` and `steps` arrays: `value_j = -alpha_j + code_j * step_j`.
+- A single `clip_alpha` float is **not sufficient** — the current implementation uses per-dimension `alpha_j` values.
+- The quantizer must be serialized/persisted alongside the index for the packed codes to be usable.
 
 ---
 
@@ -152,10 +163,20 @@ If you implement MVP in Python first, the core objects can be:
 {
   "memory_id": str,
   "quant_bits": int,
-  "clip_alpha": float,
-  "quant_scheme": "symmetric_uniform_global",
+  "quant_scheme": "symmetric_uniform_per_dim_calibrated",
   "packed_codes": bytes,
-  "dequant_scale": float,
+  "embedding_dim": int,
+  "saturation_rate": float,
+}
+```
+
+### `CalibratedScalarQuantizer` (quantizer state — stored once per index, not per record)
+```python
+{
+  "bits": int,
+  "default_alpha": float,
+  "alphas": list[float],   # per-dimension clip ranges
+  "steps": list[float],    # per-dimension bin widths
 }
 ```
 
@@ -168,8 +189,8 @@ For MVP:
 - `embedding_model`: `text-embedding-3-small`
 - `embedding_dim`: `1536`
 - `quant_bits`: `8`
-- `clip_alpha`: empirically chosen, start around `0.25`
-- `quant_scheme`: `symmetric_uniform_global`
+- `quant_scheme`: `symmetric_uniform_per_dim_calibrated`
+- per-dimension `alphas`: calibrated from corpus at 98th percentile
 - `quant_version`: `1`
 - `embedding_version`: `1`
 

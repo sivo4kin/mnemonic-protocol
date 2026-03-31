@@ -79,14 +79,14 @@ From `pseudocode.py`, the current prototype already includes:
 - benchmark mode
 - JSON result export
 
-## Important implementation note
+## Implementation note
 
-The written docs often describe a simple global symmetric quantizer as the MVP default.
+The prototype uses **corpus-calibrated per-dimension scalar quantization**
+(`CalibratedScalarQuantizer` with per-dimension `alphas[]` and `steps[]`).
 
-However, the current runnable prototype has already moved to:
-- **corpus-calibrated per-dimension scalar quantization**
-
-That means the code is slightly ahead of the docs, and documentation alignment is needed.
+As of 2026-03-29, the docs (ARCHITECTURE.md, SCHEMA.md, MVP_SPEC.md) have been
+updated to reflect this. The previous references to "global symmetric" quantization
+with a single `clip_alpha` have been corrected.
 
 ## Main artifacts
 
@@ -115,18 +115,18 @@ That means the code is slightly ahead of the docs, and documentation alignment i
 
 ## Main gaps / open questions
 
-1. No persistent storage layer yet
+1. No persistent storage layer yet — quantizer state (per-dim alphas/steps) must be serialized alongside packed codes
 2. Single-file prototype needs modularization if project grows
 3. No benchmark results on real datasets yet
-4. No latency profiling under realistic corpus size
+4. No latency profiling under realistic corpus size (pure Python list math will bottleneck past ~5k memories)
 5. No transform/rotation experiments yet
 6. No residual correction stage yet
-7. Docs and implementation are slightly out of sync
+7. ~~Docs and implementation are slightly out of sync~~ — resolved 2026-03-29
 
 ## Recommended next steps
 
 ### Priority 1
-- Align documentation with actual prototype behavior
+- ~~Align documentation with actual prototype behavior~~ — done 2026-03-29
 - Run real benchmark passes using JSONL memories/queries
 - Save benchmark outputs for comparison
 

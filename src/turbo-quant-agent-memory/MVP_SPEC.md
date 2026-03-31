@@ -7,8 +7,9 @@ and a compressed shadow index, then retrieves memories via 2-stage lookup:
 fast candidate generation on the compressed index, followed by exact reranking
 on full-precision vectors.
 
-This is **not** full TurboQuant. No random rotation, no residual QJL. Just
-scalar quantization (4-bit or 8-bit) as the compression layer.
+This is **not** full TurboQuant. No random rotation, no residual QJL. Uses
+corpus-calibrated per-dimension scalar quantization (4-bit or 8-bit) as the
+compression layer.
 
 ---
 
@@ -80,8 +81,9 @@ scalar quantization (4-bit or 8-bit) as the compression layer.
 
 | Parameter | Default | Rationale |
 |-----------|---------|-----------|
-| Embedding dimension | 1536 | Matches `text-embedding-3-small` |
+| Embedding dimension | 384 (mock) / 1536 (OpenAI) | Mock uses 384; OpenAI `text-embedding-3-small` uses 1536 |
 | Quantization bits | 8 | Good accuracy/compression trade-off |
+| Quantization scheme | Per-dimension calibrated symmetric scalar | 98th-percentile clip per dimension |
 | n_candidates | 5 * k | Empirical sweet spot; tune in M3 |
 | k (final results) | 10 | Typical agent retrieval need |
 | Distance metric | Inner product (cosine on normalized vectors) | Standard for text embeddings |

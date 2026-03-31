@@ -156,29 +156,41 @@ This separation is critical.
 
 ## 6. Quantization Strategy for MVP
 
-## Recommended default
+## Current implementation
 
-Start with **global symmetric scalar quantization** on normalized vectors.
+The prototype uses **corpus-calibrated per-dimension symmetric scalar quantization**
+on normalized vectors.
 
-For each coordinate:
-- clip to a fixed range `[-alpha, alpha]`
-- map to integer bins
+For each dimension `j`:
+- compute the 98th-percentile absolute value across the corpus for dimension `j`
+- set per-dimension clip range `alpha_j` (floored at `default_alpha / 8`, capped at `1.0`)
+- clip coordinate to `[-alpha_j, alpha_j]`
+- map to integer bins: `q = round((x + alpha_j) / step_j)` where `step_j = 2 * alpha_j / max_int`
 - store packed integer values
 
 ### Default values
 - bits: `8`
-- `alpha`: `0.25` or empirically tuned from corpus statistics
-- metric: cosine / inner product over normalized vectors
+- `default_alpha`: `0.25` (used as fallback floor only)
+- per-dimension `alpha_j`: calibrated from corpus statistics at fit time
+- metric: inner product over normalized vectors (equivalent to cosine)
 
-### Why global symmetric quantization first
-Because it is:
-- dead simple
-- stable
-- easy to benchmark
-- enough to validate the architecture
+### Why per-dimension calibrated quantization
+The original design docs specified a single global alpha. The implementation
+moved to per-dimension calibration because:
+- normalized embedding dimensions have different value distributions
+- a single alpha either over-clips dense dimensions or under-utilizes sparse ones
+- per-dimension calibration improves bin utilization with minimal added complexity
+- the quantizer `fit()` step runs once at index build time, not per query
+
+### Important: quantizer state is not persisted per record
+The per-dimension `alphas` and `steps` arrays live on the `CalibratedScalarQuantizer`
+object, not on individual `QuantizedRecord` entries. This means:
+- the quantizer must be kept alongside the index
+- re-fitting on a different corpus invalidates existing packed codes
+- persistence must serialize the quantizer state, not just the packed codes
 
 ### 4-bit mode
-Add 4-bit mode as the “stress test” compression option.
+4-bit mode is supported as the “stress test” compression option.
 If 4-bit still preserves shortlist recall well enough, that is a strong signal.
 
 ---
@@ -275,12 +287,14 @@ Mitigation:
 
 - normalized embeddings: **yes**
 - compressed shadow index: **yes**
+- quantization: **per-dimension calibrated symmetric scalar**
 - quantization bits: **8 default**, `4` experimental
 - transform/rotation: **none**
 - correction layer: **exact rerank only**
 - top-k return: `10`
 - shortlist size: `50`
-- storage model: simple local persistence first
+- embedding providers: **mock** (offline) and **OpenAI** (cached)
+- storage model: **in-memory only** (persistence not yet implemented)
 
 ---
 
@@ -289,9 +303,9 @@ Mitigation:
 Once the MVP proves value, the next upgrades should be:
 
 ### Phase 2A — Better quantization
-- per-dimension scaling
 - non-uniform scalar quantization
-- learned clipping thresholds
+- learned clipping thresholds (current 98th-percentile heuristic is a starting point)
+- quantizer state persistence alongside packed codes
 
 ### Phase 2B — TurboQuant-inspired improvements
 - structured random rotation

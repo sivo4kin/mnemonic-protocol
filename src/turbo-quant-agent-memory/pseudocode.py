@@ -77,8 +77,10 @@ class SearchResult:
 # Math helpers
 # -----------------------------------------------------------------------------
 
+from operator import mul as _mul
+
 def dot(a: List[float], b: List[float]) -> float:
-    return sum(x * y for x, y in zip(a, b))
+    return sum(map(_mul, a, b))
 
 
 def l2_norm(vec: List[float]) -> float:
@@ -307,10 +309,8 @@ class CalibratedScalarQuantizer:
             raise RuntimeError("Quantizer must be fit before use")
         assert self.alphas is not None and self.steps is not None
         codes = self.unpack_codes(packed_codes, dim)
-        score = 0.0
-        for qx, q, alpha, step in zip(query_vec, codes, self.alphas, self.steps):
-            score += qx * (-alpha + q * step)
-        return score
+        # Precompute reconstructed values and use fast dot product
+        return sum(qx * (-a + q * s) for qx, q, a, s in zip(query_vec, codes, self.alphas, self.steps))
 
     def average_alpha(self) -> float:
         if not self.alphas:

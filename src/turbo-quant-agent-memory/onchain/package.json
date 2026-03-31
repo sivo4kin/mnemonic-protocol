@@ -1,0 +1,16 @@
+{
+  "name": "mnemonic-onchain",
+  "version": "1.0.0",
+  "description": "Mnemonic on-chain commitment (Solana + Arweave)",
+  "type": "module",
+  "scripts": {
+    "test": "node test-local.mjs",
+    "test:validator": "node test-local.mjs --start-validator"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@solana/web3.js": "^1.98.4"
+  }
+}
