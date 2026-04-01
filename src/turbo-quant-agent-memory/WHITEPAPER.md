@@ -572,6 +572,7 @@ verifiable, portable, and economically viable.
 - Implement per-entry signing (primary adversarial mitigation)
 - ✅ Validate with canonical open embedder — `nomic-embed-text-v1.5` passes all gates (ADR-017)
 - Memory write semantics spec (merge / append / dedup policy)
+- **Live demo** — interactive web UI showcasing the full pipeline: search → compression comparison → provider switch → on-chain commitment → verification. Local-first (`python -m mnemonic serve`), investigative journalism demo corpus. See `DEMO_SPEC.md`.
 
 ### Phase 5 — V2 App: Personal Research Assistant
 - Agent that accumulates research across sessions and providers

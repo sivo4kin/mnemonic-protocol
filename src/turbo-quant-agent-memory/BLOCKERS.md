@@ -596,11 +596,12 @@ The product needs a coherent narrative and wedge to avoid building a technically
 13. **Robustness/noise/adversarial tests**
 
 ### Phase 3 — Productization
-14. **UX flows**
-15. **DX/API shape**
-16. **Storage economics**
-17. **Pricing/packaging**
-18. **Go-to-market and positioning**
+14. **Live demo (V1 gate)** — interactive web UI demonstrating the full pipeline: search, compression comparison, provider switch, on-chain commitment, verification. See `DEMO_SPEC.md`. Must ship before V1 SDK release.
+15. **UX flows**
+16. **DX/API shape**
+17. **Storage economics**
+18. **Pricing/packaging**
+19. **Go-to-market and positioning**
 
 ---
 

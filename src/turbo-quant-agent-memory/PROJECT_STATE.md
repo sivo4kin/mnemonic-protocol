@@ -42,9 +42,11 @@ A researcher using the V2 app who gets clear value from: (a) context surviving s
 
 ## Current phase
 
-**V1 development. All gates passed.**
+**V1 development. All retrieval gates passed. Live demo is the next V1 deliverable.**
 
-All architecture, design, and validation work is done. SQLite persistence, multi-domain recall, provider portability, encryption, security model, agent loop, and concurrent writers design are all closed. Real OpenAI embeddings at 10k scale passed (ADR-016). Canonical open embedder (`nomic-embed-text-v1.5`) validated (ADR-017) — final recall@10 = 1.000 at 1K–5K, adopted as V1 reference embedder. Prototype modularized into `mnemonic/` package. V1 SDK development can begin.
+All architecture, design, and validation work is done. SQLite persistence, multi-domain recall, provider portability, encryption, security model, agent loop, and concurrent writers design are all closed. Real OpenAI embeddings at 10k scale passed (ADR-016). Canonical open embedder (`nomic-embed-text-v1.5`) validated (ADR-017) — final recall@10 = 1.000 at 1K–5K, adopted as V1 reference embedder. Prototype modularized into `mnemonic/` package.
+
+**Next:** V1 live demo — interactive web UI demonstrating the full pipeline (search → compression comparison → provider switch → on-chain commitment → verification). See `DEMO_SPEC.md`.
 
 ## Source of truth
 
@@ -157,6 +159,7 @@ with a single `clip_alpha` have been corrected.
 - `SCHEMA.md` — data model for persistence
 - `ADR.md` — all architecture decisions (ADR-001 through ADR-017)
 - `BLOCKERS.md` — full blocker analysis (product + technical)
+- `DEMO_SPEC.md` — V1 live demo specification (5-act narrative, web UI, implementation plan)
 
 ### In `src/turbo-quant-agent-memory/mnemonic/`
 - `__init__.py` — public API exports
@@ -199,7 +202,15 @@ with a single `clip_alpha` have been corrected.
 | 2 | **Multi-domain corpus recall** | ✅ **PASSED** (ADR-013) — recall@10=1.00, purity@10=0.995 across code/legal/news/medical. |
 | 3 | **SQLite persistence** | ✅ **PASSED** (ADR-014) — save/load round-trip lossless, recall retention=1.000, top-1 identical. |
 
-**All three gates closed. V1 SDK development can begin.**
+**All three retrieval gates closed.**
+
+### V1 remaining deliverables
+
+| # | Deliverable | Status |
+|---|-------------|--------|
+| 4 | **Live demo** | 🔲 **TODO** — interactive web UI: search, compression comparison, provider switch, on-chain commit, verify. See `DEMO_SPEC.md`. |
+| 5 | **SDK API surface** | 🔲 **TODO** — public interface spec for agent builders. |
+| 6 | **Demo corpus** | 🔲 **TODO** — 1000 investigative journalism research memories for demo. |
 
 ## What's been built (updated)
 
