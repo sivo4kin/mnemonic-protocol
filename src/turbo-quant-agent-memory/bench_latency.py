@@ -22,8 +22,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-# Import from existing codebase -- do not modify pseudocode.py
-from pseudocode import (
+from mnemonic import (
     BaseEmbeddingProvider,
     CalibratedScalarQuantizer,
     MemoryIndexer,

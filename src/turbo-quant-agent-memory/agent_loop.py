@@ -19,7 +19,7 @@ import time
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
 
-from pseudocode import (
+from mnemonic import (
     MemoryStore,
     MemoryIndexer,
     MemoryRetriever,

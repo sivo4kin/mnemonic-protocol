@@ -1,0 +1,10 @@
+# Core: no external dependencies (pure Python)
+
+# Optional: OpenAI embedding provider
+# openai>=1.0
+
+# Optional: Nomic embedding provider (V1 canonical open embedder)
+# sentence-transformers>=2.2
+
+# Development
+# pytest>=7.0

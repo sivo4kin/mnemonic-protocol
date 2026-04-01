@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mnemonic"
+version = "0.1.0"
+description = "Verifiable compressed agent memory with on-chain commitment"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+
+dependencies = []
+
+[project.optional-dependencies]
+openai = ["openai>=1.0"]
+nomic = ["sentence-transformers>=2.2"]
+all = ["openai>=1.0", "sentence-transformers>=2.2"]
+dev = ["pytest>=7.0"]
+
+[project.scripts]
+mnemonic = "mnemonic.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["mnemonic*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
