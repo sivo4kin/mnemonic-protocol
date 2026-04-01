@@ -192,6 +192,78 @@ class OpenAIEmbeddingProvider(BaseEmbeddingProvider):
         return self._embed_batch_uncached([text])[0]
 
 
+class NomicEmbeddingProvider(BaseEmbeddingProvider):
+    """Open-weights embedder via sentence-transformers (nomic-embed-text-v1.5, 768-dim)."""
+
+    def __init__(self, model_name: str = "nomic-ai/nomic-embed-text-v1.5", cache: Optional[EmbeddingCache] = None):
+        super().__init__(model_name=model_name, cache=cache)
+        try:
+            from sentence_transformers import SentenceTransformer
+        except ImportError:
+            raise RuntimeError(
+                "sentence-transformers is required for --embedder nomic. "
+                "Install with: pip install sentence-transformers"
+            )
+        self._model = SentenceTransformer(model_name, trust_remote_code=True)
+
+    def provider_name(self) -> str:
+        return "nomic"
+
+    def _embed_uncached(self, text: str) -> List[float]:
+        # nomic-embed-text-v1.5 expects a task prefix for queries/documents
+        embedding = self._model.encode(f"search_document: {text}", normalize_embeddings=True)
+        return embedding.tolist()
+
+    def embed_batch(self, texts: List[str]) -> List[List[float]]:
+        """Batch embedding with per-item caching."""
+        results: List[Optional[List[float]]] = [None] * len(texts)
+        uncached_indices: List[int] = []
+        uncached_texts: List[str] = []
+
+        for i, text in enumerate(texts):
+            if self.cache is not None:
+                key = self.cache.make_key(self.provider_name(), self.model_name, text)
+                cached = self.cache.get(key)
+                if cached is not None:
+                    results[i] = cached
+                    continue
+            uncached_indices.append(i)
+            uncached_texts.append(text)
+
+        if uncached_texts:
+            # nomic expects task prefix
+            prefixed = [f"search_document: {t}" for t in uncached_texts]
+            embeddings = self._model.encode(prefixed, normalize_embeddings=True, batch_size=32)
+            for j, embedding in enumerate(embeddings):
+                idx = uncached_indices[j]
+                emb_list = embedding.tolist()
+                results[idx] = emb_list
+                if self.cache is not None:
+                    key = self.cache.make_key(self.provider_name(), self.model_name, texts[idx])
+                    self.cache.set(key, emb_list)
+
+        return results  # type: ignore[return-value]
+
+    def embed_query(self, text: str) -> List[float]:
+        """Embed a query (uses search_query prefix instead of search_document)."""
+        if self.cache is not None:
+            key = self.cache.make_key(self.provider_name(), self.model_name, f"query:{text}")
+            cached = self.cache.get(key)
+            if cached is not None:
+                return cached
+        embedding = self._model.encode(f"search_query: {text}", normalize_embeddings=True)
+        result = embedding.tolist()
+        if self.cache is not None:
+            key = self.cache.make_key(self.provider_name(), self.model_name, f"query:{text}")
+            self.cache.set(key, result)
+        return result
+
+
+def _has_embed_batch(embedder: BaseEmbeddingProvider) -> bool:
+    """Check if an embedder supports efficient batch embedding."""
+    return isinstance(embedder, (OpenAIEmbeddingProvider, NomicEmbeddingProvider))
+
+
 def build_embedder(embedder_name: str, cache_dir: Path, dim: int = 384, mock_salt: str = "") -> BaseEmbeddingProvider:
     cache = EmbeddingCache(cache_dir)
     if embedder_name == "mock":
@@ -202,4 +274,6 @@ def build_embedder(embedder_name: str, cache_dir: Path, dim: int = 384, mock_sal
             raise RuntimeError("OPENAI_API_KEY is required when --embedder openai is selected")
         model = os.environ.get("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
         return OpenAIEmbeddingProvider(api_key=api_key, model_name=model, cache=cache)
+    if embedder_name == "nomic":
+        return NomicEmbeddingProvider(cache=cache)
     raise ValueError(f"Unknown embedder: {embedder_name}")

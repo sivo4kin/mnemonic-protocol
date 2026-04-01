@@ -4,3 +4,6 @@ __pycache__/
 example-results.json
 results.json
 *.results.json
+node_modules/
+test-ledger/
+test-keypair.json

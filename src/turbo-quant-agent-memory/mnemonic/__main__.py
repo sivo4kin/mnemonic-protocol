@@ -14,11 +14,11 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
 
     demo = sub.add_parser("demo", help="run small interactive demo")
     demo.add_argument("--bits", type=int, default=8, choices=[4, 8])
-    demo.add_argument("--embedder", type=str, default="mock", choices=["mock", "openai"])
+    demo.add_argument("--embedder", type=str, default="mock", choices=["mock", "openai", "nomic"])
 
     bench = sub.add_parser("benchmark", help="run benchmark")
     bench.add_argument("--bits", type=int, default=8, choices=[4, 8])
-    bench.add_argument("--embedder", type=str, default="mock", choices=["mock", "openai"])
+    bench.add_argument("--embedder", type=str, default="mock", choices=["mock", "openai", "nomic"])
     bench.add_argument("--memories", type=int, default=1000)
     bench.add_argument("--queries", type=int, default=50)
     bench.add_argument("--k", type=int, default=10)
@@ -37,7 +37,7 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
 
     multi = sub.add_parser("multidomain", help="Experiment 4: recall across code/legal/news/medical domains")
     multi.add_argument("--bits", type=int, default=8, choices=[4, 8])
-    multi.add_argument("--embedder", type=str, default="mock", choices=["mock", "openai"])
+    multi.add_argument("--embedder", type=str, default="mock", choices=["mock", "openai", "nomic"])
     multi.add_argument("--n-per-domain", type=int, default=250)
     multi.add_argument("--k", type=int, default=10)
     multi.add_argument("--candidates", type=int, default=50)

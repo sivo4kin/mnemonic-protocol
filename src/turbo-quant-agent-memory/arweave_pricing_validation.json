@@ -1,0 +1,31 @@
+{
+  "timestamp": "2026-04-01T13:29:23.848Z",
+  "ar_usd": 1.75,
+  "irys_price_per_gb_winston": "9563553999998",
+  "irys_price_per_gb_ar": 9.563553999998,
+  "irys_price_per_gb_usd": 16.7362194999965,
+  "whitepaper_claimed_per_gb_usd": 5,
+  "ratio": 3.3472438999993,
+  "snapshot_costs": {
+    "1k memories (8-bit, 384-dim)": {
+      "bytes": 2000000,
+      "winston": "19127107998",
+      "usd": 0.0334724389965
+    },
+    "1k memories (8-bit, 1536-dim)": {
+      "bytes": 8000000,
+      "winston": "76508431998",
+      "usd": 0.1338897559965
+    },
+    "10k memories (8-bit, 384-dim)": {
+      "bytes": 15000000,
+      "winston": "143453309998",
+      "usd": 0.2510432924965
+    },
+    "10k memories (8-bit, 1536-dim)": {
+      "bytes": 100000000,
+      "winston": "956355399998",
+      "usd": 1.6736219499965
+    }
+  }
+}

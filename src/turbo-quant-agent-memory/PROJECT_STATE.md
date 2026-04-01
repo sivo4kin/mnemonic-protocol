@@ -44,7 +44,7 @@ A researcher using the V2 app who gets clear value from: (a) context surviving s
 
 **V1 development. All gates passed.**
 
-All architecture, design, and validation work is done. SQLite persistence, multi-domain recall, provider portability, encryption, security model, agent loop, and concurrent writers design are all closed. Real OpenAI embeddings at 10k scale passed (ADR-016). V1 SDK development can begin.
+All architecture, design, and validation work is done. SQLite persistence, multi-domain recall, provider portability, encryption, security model, agent loop, and concurrent writers design are all closed. Real OpenAI embeddings at 10k scale passed (ADR-016). Canonical open embedder (`nomic-embed-text-v1.5`) validated (ADR-017) — final recall@10 = 1.000 at 1K–5K, adopted as V1 reference embedder. Prototype modularized into `mnemonic/` package. V1 SDK development can begin.
 
 ## Source of truth
 
@@ -91,21 +91,23 @@ Instead, it extracts the architectural lesson:
 
 ## What's been built
 
-### Retrieval layer (`pseudocode.py`)
-- in-memory memory store
+### Retrieval layer (`mnemonic/` package)
+- in-memory memory store (`store.py`)
 - full-precision embedding storage
-- quantized shadow index
-- normalized vector retrieval
+- quantized shadow index (`quantizer.py`)
+- normalized vector retrieval (`retriever.py`)
 - corpus-calibrated per-dimension scalar quantization (4-bit and 8-bit)
 - compressed candidate retrieval + exact reranking
 - mock embedding provider (salted hash space — two instances simulate two different providers)
-- OpenAI embedding provider
-- local embedding cache
-- synthetic dataset generation + JSONL dataset ingestion
-- benchmark mode + JSON result export
+- OpenAI embedding provider (batched, retry with exponential backoff — ADR-015)
+- Nomic embedding provider (`nomic-embed-text-v1.5`, 768-dim, open weights — ADR-017)
+- local embedding cache (`cache.py`)
+- synthetic dataset generation + JSONL dataset ingestion (`persistence.py`)
+- benchmark mode + JSON result export (`benchmark.py`)
 - snapshot (raw items → provider-agnostic JSONL, no embeddings)
 - restore from snapshot (re-embed with any provider, rebuild quantized index)
 - provider-switch test (ingest with A → snapshot → restore with B → compare recall)
+- CLI entry point (`__main__.py`): demo, benchmark, persist-test, multidomain, provider-switch
 
 ### Agent integration (`agent_loop.py`)
 - reactive agent loop: retrieve → form context → store per turn
@@ -127,7 +129,7 @@ Instead, it extracts the architectural lesson:
 - benchmarked: pure Python ~58ms/query at 1k memories; numpy path available for 10k+
 
 ### Designed but deferred
-- Concurrent writers: event-sourced delta log + shared quantizer + Solana ordering (ADR-006)
+- Concurrent writers: event-sourced delta log + shared quantizer + Solana ordering (ADR-006, V1.1 scope — V1.0 is single-writer)
 - Memory eviction: pluggable policy, case-specific (ADR-007)
 - Multi-party key access: per-recipient key wrapping (ADR-006)
 
@@ -143,7 +145,8 @@ with a single `clip_alpha` have been corrected.
 ## Main artifacts
 
 ### In `src/turbo-quant-agent-memory/`
-- `pseudocode.py` — core memory system: retrieval, quantization, snapshot/restore, provider-switch test
+- `mnemonic/` — modular Python package (see below)
+- `pseudocode.py` — original monolith (superseded by `mnemonic/` package)
 - `agent_loop.py` — real agent integration loop
 - `bench_latency.py` — per-stage latency benchmarks, numpy acceleration path
 - `mvp_verify.py` — serialization round-trip verification
@@ -152,8 +155,22 @@ with a single `clip_alpha` have been corrected.
 - `MVP_SPEC.md` — goals, success criteria, security model
 - `PROJECT_STATE.md` — this file
 - `SCHEMA.md` — data model for persistence
-- `ADR.md` — all architecture decisions (ADR-001 through ADR-012)
+- `ADR.md` — all architecture decisions (ADR-001 through ADR-017)
 - `BLOCKERS.md` — full blocker analysis (product + technical)
+
+### In `src/turbo-quant-agent-memory/mnemonic/`
+- `__init__.py` — public API exports
+- `__main__.py` — CLI entry point (demo, benchmark, persist-test, multidomain, provider-switch)
+- `models.py` — MemoryItem, EmbeddingRecord, QuantizedRecord, SearchResult
+- `math_utils.py` — dot, l2_norm, normalize, clip
+- `cache.py` — EmbeddingCache (content-hash keyed)
+- `embedders.py` — BaseEmbeddingProvider, MockEmbeddingProvider, OpenAIEmbeddingProvider, NomicEmbeddingProvider
+- `quantizer.py` — CalibratedScalarQuantizer
+- `store.py` — MemoryStore
+- `indexer.py` — MemoryIndexer
+- `retriever.py` — MemoryRetriever
+- `persistence.py` — load_jsonl, ingest_memory_jsonl, save_to_sqlite, load_from_sqlite, snapshot_items, restore_from_snapshot
+- `benchmark.py` — run_demo, run_benchmark, run_persist_test, run_multidomain_benchmark, run_provider_switch_test
 
 ### In `src/turbo-quant-agent-memory/onchain/`
 - `commit.mjs` — encrypt + hash + Arweave upload + Solana memo commit
@@ -186,21 +203,23 @@ with a single `clip_alpha` have been corrected.
 
 ## What's been built (updated)
 
-### Retrieval layer (`pseudocode.py`)
+### Retrieval layer (`mnemonic/` package — modularized from `pseudocode.py`)
 - in-memory memory store
 - full-precision embedding storage
 - corpus-calibrated per-dimension scalar quantization (4-bit and 8-bit)
 - compressed candidate retrieval + exact reranking
 - mock embedding provider (salted hash space)
 - OpenAI embedding provider (batched, retry with exponential backoff — ADR-015)
+- Nomic embedding provider (`nomic-embed-text-v1.5`, 768-dim, open weights — ADR-017)
 - local embedding cache
-- synthetic dataset generation + JSONL dataset ingestion (batch-aware for OpenAI)
+- synthetic dataset generation + JSONL dataset ingestion (batch-aware for OpenAI/Nomic)
 - benchmark mode + JSON result export
 - snapshot (raw items → provider-agnostic JSONL) + restore from snapshot
 - provider-switch test — PASSED (ADR-012)
-- multi-domain benchmark (code/legal/news/medical) — PASSED (ADR-013)
+- multi-domain benchmark (code/legal/news/medical) — PASSED (ADR-013, ADR-017)
 - SQLite persistence: `save_to_sqlite` / `load_from_sqlite` — PASSED (ADR-014)
 - session persist-test round-trip — PASSED (ADR-014)
+- canonical open embedder validation — PASSED (ADR-017): nomic final recall@10 = 1.000 at 1K–5K
 
 ## Resolved gaps (reference)
 
@@ -215,3 +234,5 @@ with a single `clip_alpha` have been corrected.
 | 10 | Modularization | Deferred — acceptable for prototype; do alongside SQLite persistence (gate 3). |
 | 11 | Docs/implementation sync | Resolved 2026-03-29. |
 | 12 | Platform change survivability | Resolved 2026-04-01 (ADR-012): snapshot/restore across different embedding spaces; recall retention 1.004 (8-bit), 1.008 (4-bit); content lossless. |
+| 13 | Canonical open embedder | Resolved 2026-04-01 (ADR-017): `nomic-embed-text-v1.5` (768-dim, Apache 2.0) validated — final recall@10 = 1.000 at 1K–5K, multi-domain purity = 1.000, persistence lossless. Adopted as V1 canonical embedder. |
+| 14 | Modularization | Resolved 2026-04-01: prototype refactored into `mnemonic/` package with clean module separation (models, embedders, quantizer, store, indexer, retriever, persistence, benchmark). |

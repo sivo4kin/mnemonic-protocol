@@ -107,7 +107,7 @@ Mitigations (to be designed, not yet implemented):
 
 | Parameter | Default | Rationale |
 |-----------|---------|-----------|
-| Embedding dimension | 384 (mock) / 1536 (OpenAI) | Mock uses 384; OpenAI `text-embedding-3-small` uses 1536 |
+| Embedding dimension | 384 (mock) / 768 (nomic, V1 canonical) / 1536 (OpenAI, alternative) | V1 canonical: `nomic-ai/nomic-embed-text-v1.5` 768-dim |
 | Quantization bits | 8 | Good accuracy/compression trade-off |
 | Quantization scheme | Per-dimension calibrated symmetric scalar | 98th-percentile clip per dimension |
 | n_candidates | 5 * k | Empirical sweet spot; tune in M3 |
@@ -175,6 +175,10 @@ All experiments completed. V1 retrieval gates closed.
 
 Note: spec originally specified Recall@20 ≥ 0.95 and Rerank@10 ≥ 0.98 as upper-bound targets. At 10k with n_candidates=50 (0.5% shortlist), recall@10 is 94.2%. Increasing n_candidates to 200 recovers recall to ~97%+ — this is a tuning parameter, not a design gap.
 
+**Multi-domain caveat:** Multi-domain test used a synthetic corpus with distinct vocabulary per domain. Cross-domain vocabulary overlap scenarios not yet validated.
+
+**Recall scaling caveat:** Recall degradation from 99.4% (1K) to 94.2% (10K) is empirically observed but not mathematically modeled. The relationship between corpus size, shortlist ratio, and recall has not been fitted to a formula. "Tunable via n_candidates" is accurate; "predictable" is not — extrapolation to 50K+ is unvalidated.
+
 ### Experiment Status
 
 | Experiment | Status | ADR |
@@ -182,7 +186,7 @@ Note: spec originally specified Recall@20 ≥ 0.95 and Rerank@10 ≥ 0.98 as upp
 | 1: Quantization Quality | ✅ Done | ADR-010 |
 | 2: Retrieval Accuracy | ✅ Done (real OpenAI embeddings, 1k + 10k) | ADR-016 |
 | 3: Latency | ✅ Done | ADR-010 |
-| 4: Multi-Domain Corpus | ✅ Done | ADR-013 |
+| 4: Multi-Domain Corpus | ✅ Done (mock + nomic) | ADR-013, ADR-017 |
 | 5: Adversarial Inputs | Deferred to post-V1 | ADR-009 |
 
 ### Storage Economics (real run, OpenAI text-embedding-3-small, 1536-dim)

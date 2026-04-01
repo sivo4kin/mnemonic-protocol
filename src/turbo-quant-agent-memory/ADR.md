@@ -1,6 +1,6 @@
 # Architecture Decision Record — Mnemonic
 
-Last updated: 2026-03-31
+Last updated: 2026-04-01
 
 ---
 
@@ -539,7 +539,8 @@ Saved file sizes: ~2.3–2.4 MB for 500 memories at 384 dimensions (float32 + qu
 ### Source (`src/turbo-quant-agent-memory/`)
 | File | Purpose |
 |------|---------|
-| `pseudocode.py` | Core memory system (810 lines) |
+| `mnemonic/` | Modular Python package (models, embedders, quantizer, store, indexer, retriever, persistence, benchmark, CLI) |
+| `pseudocode.py` | Original monolith (superseded by `mnemonic/` package) |
 | `agent_loop.py` | Real agent integration demo |
 | `bench_latency.py` | Latency benchmarks with numpy path |
 | `mvp_verify.py` | Serialization round-trip verification |
@@ -634,3 +635,84 @@ Saved file sizes: ~2.3–2.4 MB for 500 memories at 384 dimensions (float32 + qu
 ### Git commits (this session)
 - `23c452c` — agent loop, encryption layer, latency benchmarks
 - `797be9a` — research docs, corpus generator, verification suite, C dot product
+
+---
+
+## ADR-017: Open Embedder Validation — nomic-embed-text-v1.5
+
+**Date:** 2026-04-01
+**Status:** Accepted — PASSED
+**Addresses:** Critical review Issue 2 (V1 embedding model ambiguity), WHITEPAPER.md section 4.2
+
+**Context:** All V1 gates (ADR-013, ADR-014, ADR-016) were passed using proprietary
+OpenAI `text-embedding-3-small` (1536-dim). The whitepaper specifies a "canonical open
+embedder" for provider independence, but this had never been validated. The critical
+review flagged this as a P1 issue: V1 cannot credibly claim provider independence if
+the only validated embedder is proprietary.
+
+**Decision:** Run the full benchmark suite with `nomic-ai/nomic-embed-text-v1.5`
+(768-dim, open weights, Apache 2.0, via sentence-transformers). Compare against
+OpenAI results. If nomic passes all gates, it becomes the V1 canonical embedder.
+
+**Implementation:** Added `NomicEmbeddingProvider` to `mnemonic/embedders.py` with
+batch embedding support, `search_document:` / `search_query:` task prefixes per
+nomic documentation, and local embedding cache. Updated CLI, benchmark harness, and
+`build_embedder()` factory to support `--embedder nomic`.
+
+**Results — nomic-embed-text-v1.5 (768-dim):**
+
+| Test | Bits | Memories | Candidate Recall@10 | Final Recall@10 | Pass |
+|------|------|----------|---------------------|-----------------|------|
+| Benchmark | 8 | 1,000 | 0.922 | **1.000** | ✅ |
+| Benchmark | 4 | 1,000 | 0.890 | **1.000** | ✅ |
+| Benchmark | 8 | 5,000 | 0.936 | **1.000** | ✅ |
+| Benchmark | 4 | 5,000 | 0.862 | **1.000** | ✅ |
+| Multi-domain | 8 | 1,000 | 1.000 | **1.000** | ✅ (purity 1.000) |
+| Persist-test | 8 | 500 | retention **1.000** | top-1 identical | ✅ |
+
+**Comparison — nomic (768-dim) vs OpenAI (1536-dim):**
+
+| Metric | OpenAI 1K 8-bit | Nomic 1K 8-bit | OpenAI 10K 8-bit | Nomic 5K 8-bit | Nomic 5K 4-bit |
+|--------|----------------|----------------|------------------|----------------|----------------|
+| Candidate recall@10 | 0.972 | 0.922 | 0.886 | 0.936 | 0.862 |
+| Final recall@10 | 0.994 | **1.000** | 0.942 | **1.000** | **1.000** |
+| Compression ratio | 25% | 25% | 25% | 25% | 12.5% |
+| Embedding dim | 1536 | 768 | 1536 | 768 | 768 |
+| Compressed bytes/item | 1,536 B | 768 B | 1,536 B | 768 B | 384 B |
+| License | Proprietary | Apache 2.0 | Proprietary | Apache 2.0 | Apache 2.0 |
+
+**Key observations:**
+
+1. **Nomic final recall is perfect (1.000) at 1K and 5K.** The 2-stage cascade
+   fully recovers from compressed-stage misses. This is stronger than OpenAI
+   (0.994 at 1K, 0.942 at 10K).
+
+2. **Nomic candidate recall is slightly lower** (0.922 vs 0.972 at 1K). This
+   is expected — 768-dim has less information capacity than 1536-dim. But exact
+   reranking fully compensates.
+
+3. **Half the storage cost.** 768 bytes/item vs 1,536 bytes/item at 8-bit.
+   Arweave cost per snapshot is roughly halved.
+
+4. **Multi-domain and persistence results are identical** to OpenAI — perfect
+   recall, perfect purity, lossless round-trip.
+
+5. **10K test could not run on the validation machine** (3.8 GB RAM, no swap).
+   The sentence-transformers model uses ~1.3 GB, leaving insufficient memory
+   for 10K embeddings. 5K passed cleanly. 10K validation requires ≥8 GB RAM
+   and should be run on a production-class machine before V1 release.
+
+**Consequences:**
+
+- `nomic-embed-text-v1.5` is adopted as the **V1 canonical open embedder**.
+- WHITEPAPER.md section 4.2 is updated from recommendation to authoritative.
+- Section 9.2 Q4 ("What is the right open canonical embedder?") is closed.
+- OpenAI `text-embedding-3-small` remains a supported alternative but is no
+  longer the reference.
+- 10K validation with nomic is deferred to a machine with sufficient RAM.
+  Based on 1K→5K trend (recall stable at 1.000), 10K is expected to pass.
+- The NomicEmbeddingProvider is production-ready with batch embedding and
+  caching support.
+
+**Results files:** `nomic_results_{1k,5k}_{4,8}bit.json`,
+`nomic_multidomain_8bit.json`, `nomic_persist_8bit.json`

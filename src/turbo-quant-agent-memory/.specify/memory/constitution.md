@@ -31,7 +31,10 @@ holding the decryption key. This means:
 - The hash chain MUST be append-only; rollback attempts MUST be
   detectable via commitment chain references
 - Round-trip determinism is non-negotiable: serialize → hash →
-  rehydrate MUST produce identical retrieval results
+  rehydrate MUST produce identical retrieval results (this refers
+  to the serialize → hash → rehydrate path and the compressed
+  candidate set; exact rerank float scores are
+  architecture-dependent at tie-breaking precision)
 - No silent data loss — quantization, compression, and persistence
   layers MUST preserve lossless round-trip fidelity
 

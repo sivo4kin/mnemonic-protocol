@@ -58,8 +58,8 @@ Stores full-precision embeddings and embedding metadata.
 | Field | Type | Required | Notes |
 |---|---|---:|---|
 | `memory_id` | string / UUID | yes | FK to `memory_items` |
-| `embedding_model` | string | yes | e.g. `text-embedding-3-small` |
-| `embedding_dim` | integer | yes | e.g. 1536 |
+| `embedding_model` | string | yes | e.g. `nomic-ai/nomic-embed-text-v1.5` (V1 canonical), `text-embedding-3-small` (alternative) |
+| `embedding_dim` | integer | yes | e.g. 768 (nomic), 1536 (OpenAI) |
 | `embedding_dtype` | string | yes | `float32` |
 | `embedding_f32` | blob / array | yes | Full-precision vector |
 | `embedding_norm` | float | yes | L2 norm before normalization |
@@ -186,8 +186,8 @@ If you implement MVP in Python first, the core objects can be:
 
 For MVP:
 
-- `embedding_model`: `text-embedding-3-small`
-- `embedding_dim`: `1536`
+- `embedding_model`: `nomic-ai/nomic-embed-text-v1.5` (V1 canonical open embedder)
+- `embedding_dim`: `768`
 - `quant_bits`: `8`
 - `quant_scheme`: `symmetric_uniform_per_dim_calibrated`
 - per-dimension `alphas`: calibrated from corpus at 98th percentile

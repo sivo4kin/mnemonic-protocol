@@ -6,7 +6,7 @@ import statistics
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-from .embedders import BaseEmbeddingProvider, MockEmbeddingProvider, OpenAIEmbeddingProvider, build_embedder
+from .embedders import BaseEmbeddingProvider, MockEmbeddingProvider, OpenAIEmbeddingProvider, build_embedder, _has_embed_batch
 from .indexer import MemoryIndexer
 from .math_utils import normalize
 from .models import EmbeddingRecord, MemoryItem, SearchResult
@@ -98,8 +98,8 @@ def generate_synthetic_corpus(indexer: MemoryIndexer, n: int, seed: int = 7) -> 
         content = f"memory {i} about {label} systems with {' '.join(chosen)} and note {' '.join(noise_words)}"
         rows.append({"memory_id": f"syn_{i}", "content": content, "memory_type": label})
 
-    # Batch-embed when using OpenAI to avoid per-item API calls
-    if isinstance(indexer.embedder, OpenAIEmbeddingProvider):
+    # Batch-embed when provider supports it (OpenAI, Nomic) to avoid per-item calls
+    if _has_embed_batch(indexer.embedder):
         texts = [r["content"] for r in rows]
         print(f"[corpus] batch-embedding {len(texts)} synthetic items ...")
         embeddings = indexer.embedder.embed_batch(texts)
@@ -353,7 +353,7 @@ def generate_multidomain_corpus(indexer: MemoryIndexer, n_per_domain: int = 250,
             rows.append({"memory_id": memory_id, "content": content, "memory_type": domain})
             mid += 1
 
-    if isinstance(indexer.embedder, OpenAIEmbeddingProvider):
+    if _has_embed_batch(indexer.embedder):
         texts = [r["content"] for r in rows]
         print(f"[multidomain] batch-embedding {len(texts)} items ...")
         embeddings = indexer.embedder.embed_batch(texts)

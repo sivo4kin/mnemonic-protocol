@@ -222,7 +222,7 @@ def main():
 | Rotation | ✓ | Seeded numpy PRNG |
 | Quantization | ✓ | Integer arithmetic after calibration |
 | Compressed scoring | ✓ | Integer dot product |
-| Exact reranking | ✗ (float platform-dependent) | Acceptable — candidate set is deterministic |
+| Exact reranking | ✗ (float platform-dependent) | Acceptable — candidate SET is deterministic; final ordering is architecture-dependent only at tie-breaking precision |
 | Serialization | ✓ | Fixed byte order (little-endian) |
 | Hashing | ✓ | SHA3-256 standard |
 

@@ -305,9 +305,9 @@ A product cannot be shipped confidently without understanding how the system beh
 - memory footprint growth → not profiled at 100k+
 
 #### Open questions
-~~- What breaks first as corpus size grows?~~ → **At 10k, recall drops predictably with n_candidates/N ratio. Increase n_candidates to compensate.**
+~~- What breaks first as corpus size grows?~~ → **At 10k, recall drops with n_candidates/N ratio (observed, not modeled). Increase n_candidates to compensate.**
 ~~- How does recall change at larger scale?~~ → **At 0.5% shortlist (10k, n_candidates=50): 94.2% final recall. At 5% shortlist (1k, n_candidates=50): 99.4%. Shortlist ratio is the control knob.**
-~~- How does candidate shortlist quality degrade with scale?~~ → **Gracefully and predictably — tunable via n_candidates.**
+~~- How does candidate shortlist quality degrade with scale?~~ → **Observed to degrade gracefully between 1K and 10K — tunable via n_candidates. Not yet modeled mathematically; extrapolation to 50K+ is unvalidated.**
 - How expensive are rebuilds at 100k+? → Open.
 - Can memory growth stay operationally manageable? → Linear at $0.039/1k items/snapshot on Arweave. Acceptable for V1 (≤10k items). Needs review at 100k.
 
