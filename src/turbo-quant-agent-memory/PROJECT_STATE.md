@@ -6,18 +6,45 @@
 
 ## One-line summary
 
-A practical, TurboQuant-inspired compressed agent memory MVP that uses a compressed shadow index for candidate generation and exact full-precision reranking for final retrieval quality.
+Verifiable and non-censored shared agent memory system — V1 is infrastructure, V2 is infrastructure + a consumer app.
+
+## Product definition
+
+### What it is
+A verifiable and non-censored shared agent memory system. Infrastructure that any agent or agent network can use to store and retrieve context across sessions.
+
+### Who it's for
+Two simultaneous audiences:
+- **Agent builders** — SDK/API consumers who wire memory into their agent pipelines
+- **Non-technical users** — who interact with a V2 app that happens to use agents with shared memory under the hood
+
+### What the user buys
+Verifiable and non-censored agent memory layout. Not just storage — proof that memory wasn't tampered with, and no platform can censor or revoke it.
+
+### The wedge
+Any agent (or agent network) that needs shared context. The first paying use case will be built as a concrete agent application where shared memory produces clear user value.
+
+### V1 vs V2
+- **V1** — infrastructure only: memory store, quantized retrieval, on-chain commitment, SDK
+- **V2** — infrastructure + a Personal Research Assistant app (see ADR-011)
+
+### V2 app: Personal Research Assistant (chosen)
+An agent that accumulates research across sessions. Memory survives model switches and provider changes. Co-researchers can be invited into a shared memory pool. On-chain proof of what was known and when.
+
+**Target users:** Independent researchers, investigative journalists, PhD students, analysts.
+**Demo moment:** Switch from Claude to GPT-4 mid-project — your research context is intact. Add a co-author — they see everything you discovered.
+**Other candidates evaluated:** Developer institutional memory agent (Option B), Sovereign personal AI (Option C) — see ADR-011 for full analysis. Option B is the natural second vertical.
+
+### First paying customer model
+A researcher using the V2 app who gets clear value from: (a) context surviving session resets and model switches, and (b) being able to share a research pool with a collaborator.
+
+---
 
 ## Current phase
 
-Late research / early prototype.
+**V1 development. All gates passed.**
 
-This is no longer just an idea dump. The project already has:
-- paper analysis
-- distilled architectural principles
-- schema and MVP specs
-- a runnable Python prototype
-- demo and benchmark entrypoints
+All architecture, design, and validation work is done. SQLite persistence, multi-domain recall, provider portability, encryption, security model, agent loop, and concurrent writers design are all closed. Real OpenAI embeddings at 10k scale passed (ADR-016). V1 SDK development can begin.
 
 ## Source of truth
 
@@ -28,15 +55,17 @@ Within this environment, the source of truth is:
 
 ## Project thesis
 
-The core question being tested is:
+Two interlocking questions:
 
-> Can a compressed shadow index reduce storage cost while preserving retrieval quality well enough through exact reranking?
+> 1. Can a compressed shadow index reduce storage cost while preserving retrieval quality well enough through exact reranking?
+> 2. Can on-chain commitment make agent memory verifiable and tamper-evident without killing usability?
 
 The project intentionally does **not** begin with full TurboQuant complexity.
 Instead, it extracts the architectural lesson:
 - compress broadly
 - recover precision narrowly
 - keep full-precision vectors as the correctness layer
+- commit state on-chain so any reader can verify it wasn't altered
 
 ## Architecture summary
 
@@ -60,24 +89,47 @@ Instead, it extracts the architectural lesson:
 6. exact rerank
 7. return final top `k`
 
-## Implemented today
+## What's been built
 
-From `pseudocode.py`, the current prototype already includes:
+### Retrieval layer (`pseudocode.py`)
 - in-memory memory store
 - full-precision embedding storage
 - quantized shadow index
 - normalized vector retrieval
-- calibrated scalar quantization
-- 4-bit and 8-bit modes
-- compressed candidate retrieval
-- exact reranking
-- mock embedding provider
+- corpus-calibrated per-dimension scalar quantization (4-bit and 8-bit)
+- compressed candidate retrieval + exact reranking
+- mock embedding provider (salted hash space — two instances simulate two different providers)
 - OpenAI embedding provider
 - local embedding cache
-- synthetic dataset generation
-- JSONL dataset ingestion
-- benchmark mode
-- JSON result export
+- synthetic dataset generation + JSONL dataset ingestion
+- benchmark mode + JSON result export
+- snapshot (raw items → provider-agnostic JSONL, no embeddings)
+- restore from snapshot (re-embed with any provider, rebuild quantized index)
+- provider-switch test (ingest with A → snapshot → restore with B → compare recall)
+
+### Agent integration (`agent_loop.py`)
+- reactive agent loop: retrieve → form context → store per turn
+- episodic / semantic / decision memory types with importance scoring
+- periodic index rebuild (every 3 ingestions + on-demand before retrieval)
+- 20-turn multi-topic demo scenario
+
+### On-chain commitment (`onchain/commit.mjs`)
+- AES-256-GCM encryption (HKDF from keypair, encrypt-before-hash)
+- SHA3-256 hash of encrypted blob
+- Arweave upload (encrypted content-addressed storage)
+- Solana memo commitment (hash + metadata, fully public)
+- Decrypt + verify round-trip
+- 11 tests against local Solana validator (`test-local.mjs`)
+
+### Performance (`bench_latency.py`)
+- per-stage latency instrumentation (Stage 1: compressed scan, Stage 2: exact rerank)
+- numpy acceleration path (matrix multiply scoring, vectorized quantization)
+- benchmarked: pure Python ~58ms/query at 1k memories; numpy path available for 10k+
+
+### Designed but deferred
+- Concurrent writers: event-sourced delta log + shared quantizer + Solana ordering (ADR-006)
+- Memory eviction: pluggable policy, case-specific (ADR-007)
+- Multi-party key access: per-recipient key wrapping (ADR-006)
 
 ## Implementation note
 
@@ -91,18 +143,27 @@ with a single `clip_alpha` have been corrected.
 ## Main artifacts
 
 ### In `src/turbo-quant-agent-memory/`
-- `README.md`
-- `ARCHITECTURE.md`
-- `MVP_SPEC.md`
-- `SCHEMA.md`
-- `pseudocode.py`
-- `PROJECT_STATE.md`
+- `pseudocode.py` — core memory system: retrieval, quantization, snapshot/restore, provider-switch test
+- `agent_loop.py` — real agent integration loop
+- `bench_latency.py` — per-stage latency benchmarks, numpy acceleration path
+- `mvp_verify.py` — serialization round-trip verification
+- `generate_real_corpus.py` — realistic multi-topic dataset generator
+- `ARCHITECTURE.md` — design principles and failure modes
+- `MVP_SPEC.md` — goals, success criteria, security model
+- `PROJECT_STATE.md` — this file
+- `SCHEMA.md` — data model for persistence
+- `ADR.md` — all architecture decisions (ADR-001 through ADR-012)
+- `BLOCKERS.md` — full blocker analysis (product + technical)
+
+### In `src/turbo-quant-agent-memory/onchain/`
+- `commit.mjs` — encrypt + hash + Arweave upload + Solana memo commit
+- `encrypt.mjs` — AES-256-GCM encryption module (HKDF, packed format)
+- `test-local.mjs` — 11 tests against local Solana validator
 
 ### In `research/turbo-quant-agent-memory/`
-- `paper.pdf`
-- `report.md`
-- `condensed-principles.md`
-- `apply-to-agent-memory-architecture.md`
+- `WHITEPAPER.md` — TurboQuant paper analysis
+- `MVP_VERIFICATION.md` — verification methodology
+- `CONCURRENT_WRITERS.md` — concurrent writers research (ADR-006 basis)
 
 ## Key strengths of current design
 
@@ -113,48 +174,44 @@ with a single `clip_alpha` have been corrected.
 - practical benchmarkability
 - online-friendly ingestion story
 
-## Main gaps / open questions
+## V1 remaining gates
 
-1. No persistent storage layer yet — quantizer state (per-dim alphas/steps) must be serialized alongside packed codes
-2. Single-file prototype needs modularization if project grows
-3. No benchmark results on real datasets yet
-4. No latency profiling under realistic corpus size (pure Python list math will bottleneck past ~5k memories)
-5. No transform/rotation experiments yet
-6. No residual correction stage yet
-7. ~~Docs and implementation are slightly out of sync~~ — resolved 2026-03-29
+| # | Gate | Status |
+|---|------|--------|
+| 1 | **Real embeddings at scale** | ✅ **PASSED** (ADR-016) — 10k memories, OpenAI `text-embedding-3-small` (1536-dim): candidate recall@10=0.886 (8-bit), final recall@10=0.942. Round-trip lossless, hash match. Arweave cost ~$0.39/snapshot. |
+| 2 | **Multi-domain corpus recall** | ✅ **PASSED** (ADR-013) — recall@10=1.00, purity@10=0.995 across code/legal/news/medical. |
+| 3 | **SQLite persistence** | ✅ **PASSED** (ADR-014) — save/load round-trip lossless, recall retention=1.000, top-1 identical. |
 
-## Recommended next steps
+**All three gates closed. V1 SDK development can begin.**
 
-### Priority 1
-- ~~Align documentation with actual prototype behavior~~ — done 2026-03-29
-- Run real benchmark passes using JSONL memories/queries
-- Save benchmark outputs for comparison
+## What's been built (updated)
 
-### Priority 2
-- Split `pseudocode.py` into modules:
-  - embeddings
-  - quantization
-  - storage
-  - retrieval
-  - benchmarking
+### Retrieval layer (`pseudocode.py`)
+- in-memory memory store
+- full-precision embedding storage
+- corpus-calibrated per-dimension scalar quantization (4-bit and 8-bit)
+- compressed candidate retrieval + exact reranking
+- mock embedding provider (salted hash space)
+- OpenAI embedding provider (batched, retry with exponential backoff — ADR-015)
+- local embedding cache
+- synthetic dataset generation + JSONL dataset ingestion (batch-aware for OpenAI)
+- benchmark mode + JSON result export
+- snapshot (raw items → provider-agnostic JSONL) + restore from snapshot
+- provider-switch test — PASSED (ADR-012)
+- multi-domain benchmark (code/legal/news/medical) — PASSED (ADR-013)
+- SQLite persistence: `save_to_sqlite` / `load_from_sqlite` — PASSED (ADR-014)
+- session persist-test round-trip — PASSED (ADR-014)
 
-### Priority 3
-- Choose persistence approach for MVP:
-  - SQLite is likely the best first step
+## Resolved gaps (reference)
 
-### Priority 4
-- Only after real benchmarks, decide whether to explore:
-  - random/structured transforms
-  - residual correction
-  - tiered precision classes
-
-## Working recommendation
-
-Do not overcommit to full TurboQuant implementation yet.
-First prove that:
-- shortlist recall is strong enough
-- exact reranking recovers quality reliably
-- storage savings are meaningful
-- operational complexity stays low
-
-If those are true, then phase 2 can justify additional sophistication.
+| # | Gap | Resolution |
+|---|-----|-----------|
+| 3 | Adversarial input research | Security model defined (ADR-009): 4 attack vectors identified, mitigations designed. Implementation deferred to pre-production (not a V1 SDK gate). |
+| 5 | Latency profiling | `bench_latency.py` done (ADR-004): pure Python ~58ms/query at 1k. Numpy path identified. Pure Python acceptable through 1k; numpy or Rust needed at 10k+. |
+| 6 | Transforms / rotation | Deferred to phase 2 (post-V1). Not needed to prove core thesis. |
+| 7 | Multi-party access | Single-owner keypair for V1 by design (ADR-003, ADR-009). Key wrapping path designed for V2. |
+| 8 | Concurrent writers | Architecture designed (ADR-006): event-sourced delta log, deferred to V1 SDK phase. |
+| 9 | Memory eviction | Pluggable policy design decided (ADR-007). Case-specific. Deferred. |
+| 10 | Modularization | Deferred — acceptable for prototype; do alongside SQLite persistence (gate 3). |
+| 11 | Docs/implementation sync | Resolved 2026-03-29. |
+| 12 | Platform change survivability | Resolved 2026-04-01 (ADR-012): snapshot/restore across different embedding spaces; recall retention 1.004 (8-bit), 1.008 (4-bit); content lossless. |

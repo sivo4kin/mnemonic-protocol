@@ -1,0 +1,46 @@
+{
+  "config": {
+    "bits": 8,
+    "embedder": "mock",
+    "model": "mock-hash-embedder-v2",
+    "n_per_domain": 250,
+    "total_memories": 1000,
+    "k": 10,
+    "n_candidates": 50,
+    "domains": [
+      "code",
+      "legal",
+      "news",
+      "medical"
+    ],
+    "thresholds": {
+      "recall_at_k": 0.85,
+      "domain_purity_at_k": 0.8
+    }
+  },
+  "per_domain": {
+    "code": {
+      "recall_at_k": 1.0,
+      "domain_purity_at_k": 0.9800000000000001
+    },
+    "legal": {
+      "recall_at_k": 1.0,
+      "domain_purity_at_k": 1.0
+    },
+    "news": {
+      "recall_at_k": 1.0,
+      "domain_purity_at_k": 1.0
+    },
+    "medical": {
+      "recall_at_k": 1.0,
+      "domain_purity_at_k": 1.0
+    }
+  },
+  "summary": {
+    "avg_recall_at_k": 1.0,
+    "avg_domain_purity_at_k": 0.995,
+    "recall_pass": true,
+    "purity_pass": true,
+    "passed": true
+  }
+}

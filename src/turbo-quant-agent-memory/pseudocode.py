@@ -27,6 +27,7 @@ import json
 import math
 import os
 import random
+import sqlite3
 import statistics
 import sys
 import urllib.request
@@ -161,9 +162,10 @@ class MockEmbeddingProvider(BaseEmbeddingProvider):
         "agent": ["agent", "tool", "planner", "autonomy", "task"],
     }
 
-    def __init__(self, model_name: str = "mock-hash-embedder-v2", dim: int = 384, cache: Optional[EmbeddingCache] = None):
+    def __init__(self, model_name: str = "mock-hash-embedder-v2", dim: int = 384, cache: Optional[EmbeddingCache] = None, salt: str = ""):
         super().__init__(model_name=model_name, cache=cache)
         self.dim = dim
+        self.salt = salt
 
     def provider_name(self) -> str:
         return "mock"
@@ -196,7 +198,8 @@ class MockEmbeddingProvider(BaseEmbeddingProvider):
         return vec
 
     def _signed_hash_add(self, vec: List[float], key: str, weight: float) -> None:
-        digest = hashlib.sha256(key.encode("utf-8")).digest()
+        salted = f"{self.salt}:{key}" if self.salt else key
+        digest = hashlib.sha256(salted.encode("utf-8")).digest()
         idx1 = int.from_bytes(digest[0:4], "big") % self.dim
         idx2 = int.from_bytes(digest[4:8], "big") % self.dim
         idx3 = int.from_bytes(digest[8:12], "big") % self.dim
@@ -224,6 +227,10 @@ class MockEmbeddingProvider(BaseEmbeddingProvider):
 
 
 class OpenAIEmbeddingProvider(BaseEmbeddingProvider):
+    BATCH_SIZE = 128  # OpenAI supports up to 2048; 128 is safe and fast
+    MAX_RETRIES = 6
+    RETRY_BASE_DELAY = 1.0  # seconds; doubles each retry (1, 2, 4, 8, 16, 32)
+
     def __init__(self, api_key: str, model_name: str = "text-embedding-3-small", cache: Optional[EmbeddingCache] = None):
         super().__init__(model_name=model_name, cache=cache)
         self.api_key = api_key
@@ -231,27 +238,77 @@ class OpenAIEmbeddingProvider(BaseEmbeddingProvider):
     def provider_name(self) -> str:
         return "openai"
 
+    def embed_batch(self, texts: List[str]) -> List[List[float]]:
+        """Embed a list of texts in batches, using cache where available.
+
+        Respects cache per-item. Only calls the API for uncached texts.
+        Returns embeddings in the same order as input texts.
+        """
+        results: List[Optional[List[float]]] = [None] * len(texts)
+        uncached_indices: List[int] = []
+        uncached_texts: List[str] = []
+
+        for i, text in enumerate(texts):
+            if self.cache is not None:
+                key = self.cache.make_key(self.provider_name(), self.model_name, text)
+                cached = self.cache.get(key)
+                if cached is not None:
+                    results[i] = cached
+                    continue
+            uncached_indices.append(i)
+            uncached_texts.append(text)
+
+        # Process uncached in batches
+        for batch_start in range(0, len(uncached_texts), self.BATCH_SIZE):
+            batch_texts = uncached_texts[batch_start:batch_start + self.BATCH_SIZE]
+            batch_embeddings = self._embed_batch_uncached(batch_texts)
+            for j, embedding in enumerate(batch_embeddings):
+                idx = uncached_indices[batch_start + j]
+                results[idx] = embedding
+                if self.cache is not None:
+                    key = self.cache.make_key(self.provider_name(), self.model_name, texts[idx])
+                    self.cache.set(key, embedding)
+
+        return results  # type: ignore[return-value]
+
+    def _embed_batch_uncached(self, texts: List[str]) -> List[List[float]]:
+        import time
+        payload = json.dumps({"input": texts, "model": self.model_name}).encode("utf-8")
+        delay = self.RETRY_BASE_DELAY
+        last_exc: Exception = RuntimeError("no attempts made")
+        for attempt in range(self.MAX_RETRIES):
+            req = urllib.request.Request(
+                url="https://api.openai.com/v1/embeddings",
+                data=payload,
+                method="POST",
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {self.api_key}",
+                },
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=60) as resp:
+                    body = resp.read().decode("utf-8")
+                data = json.loads(body)
+                # API returns results in order; sort by index to be safe
+                items = sorted(data["data"], key=lambda x: x["index"])
+                return [item["embedding"] for item in items]
+            except urllib.error.HTTPError as e:
+                last_exc = e
+                if e.code == 429 or e.code >= 500:
+                    if attempt < self.MAX_RETRIES - 1:
+                        print(f"[openai] HTTP {e.code}, retry {attempt + 1}/{self.MAX_RETRIES - 1} in {delay:.1f}s")
+                        time.sleep(delay)
+                        delay *= 2
+                        continue
+                raise RuntimeError(f"OpenAI embeddings request failed after {attempt + 1} attempts: {e}") from e
+            except Exception as e:
+                last_exc = e
+                raise RuntimeError(f"OpenAI embeddings request failed: {e}") from e
+        raise RuntimeError(f"OpenAI embeddings exhausted {self.MAX_RETRIES} retries") from last_exc
+
     def _embed_uncached(self, text: str) -> List[float]:
-        payload = json.dumps({"input": text, "model": self.model_name}).encode("utf-8")
-        req = urllib.request.Request(
-            url="https://api.openai.com/v1/embeddings",
-            data=payload,
-            method="POST",
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {self.api_key}",
-            },
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=60) as resp:
-                body = resp.read().decode("utf-8")
-        except Exception as e:
-            raise RuntimeError(f"OpenAI embeddings request failed: {e}") from e
-        try:
-            data = json.loads(body)
-            return data["data"][0]["embedding"]
-        except Exception as e:
-            raise RuntimeError(f"Failed to parse OpenAI embeddings response: {e}; body={body[:500]}") from e
+        return self._embed_batch_uncached([text])[0]
 
 
 # -----------------------------------------------------------------------------
@@ -489,24 +546,207 @@ def load_jsonl(path: Path) -> List[dict]:
 
 
 def ingest_memory_jsonl(indexer: MemoryIndexer, path: Path) -> None:
-    for row in load_jsonl(path):
-        memory_id = row["memory_id"]
-        content = row["content"]
-        memory_type = row.get("memory_type", "episodic")
-        importance_score = float(row.get("importance_score", 0.0))
-        tags = row.get("tags", [])
-        indexer.ingest_memory(memory_id, content, memory_type=memory_type, importance_score=importance_score, tags=tags)
+    rows = load_jsonl(path)
+    # Use batch embedding when available (OpenAI provider) to avoid per-item API calls
+    if isinstance(indexer.embedder, OpenAIEmbeddingProvider) and rows:
+        texts = [r["content"] for r in rows]
+        print(f"[ingest] batch-embedding {len(texts)} items ...")
+        embeddings = indexer.embedder.embed_batch(texts)
+        for row, embedding in zip(rows, embeddings):
+            memory_id = row["memory_id"]
+            content = row["content"]
+            memory_type = row.get("memory_type", "episodic")
+            importance_score = float(row.get("importance_score", 0.0))
+            tags = row.get("tags", [])
+            item = MemoryItem(memory_id, content, memory_type, importance_score, tags)
+            indexer.store.put_item(item)
+            normalized, norm = normalize(embedding)
+            indexer.store.put_embedding(EmbeddingRecord(
+                memory_id=memory_id,
+                embedding_model=indexer.embedder.model_name,
+                embedding_dim=len(embedding),
+                embedding_f32=embedding,
+                embedding_norm=norm,
+                normalized_f32=normalized,
+            ))
+    else:
+        for row in rows:
+            memory_id = row["memory_id"]
+            content = row["content"]
+            memory_type = row.get("memory_type", "episodic")
+            importance_score = float(row.get("importance_score", 0.0))
+            tags = row.get("tags", [])
+            indexer.ingest_memory(memory_id, content, memory_type=memory_type, importance_score=importance_score, tags=tags)
     indexer.rebuild_quantized_index()
+
+
+_SQLITE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS memory_items (
+    memory_id TEXT PRIMARY KEY,
+    content TEXT NOT NULL,
+    memory_type TEXT NOT NULL,
+    importance_score REAL NOT NULL,
+    tags TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS embeddings (
+    memory_id TEXT PRIMARY KEY,
+    embedding_model TEXT NOT NULL,
+    embedding_dim INTEGER NOT NULL,
+    embedding_f32 BLOB NOT NULL,
+    embedding_norm REAL NOT NULL,
+    normalized_f32 BLOB NOT NULL
+);
+CREATE TABLE IF NOT EXISTS quantized (
+    memory_id TEXT PRIMARY KEY,
+    quant_bits INTEGER NOT NULL,
+    quant_scheme TEXT NOT NULL,
+    packed_codes BLOB NOT NULL,
+    embedding_dim INTEGER NOT NULL,
+    saturation_rate REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS quantizer_state (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    bits INTEGER NOT NULL,
+    alphas BLOB NOT NULL,
+    steps BLOB NOT NULL
+);
+"""
+
+
+def save_to_sqlite(store: MemoryStore, quantizer: CalibratedScalarQuantizer, path: Path) -> None:
+    """Persist the full memory store and quantizer state to a SQLite database.
+
+    Stores raw text, full-precision embeddings, quantized codes, and the
+    calibrated quantizer parameters (alphas + steps). A subsequent
+    load_from_sqlite call restores an identical in-memory state without
+    re-embedding anything.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(path))
+    try:
+        conn.executescript(_SQLITE_SCHEMA)
+        cur = conn.cursor()
+        for mid, item in store.items.items():
+            cur.execute(
+                "INSERT OR REPLACE INTO memory_items VALUES (?, ?, ?, ?, ?)",
+                (item.memory_id, item.content, item.memory_type, item.importance_score, json.dumps(item.tags)),
+            )
+        for mid, emb in store.embeddings.items():
+            cur.execute(
+                "INSERT OR REPLACE INTO embeddings VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    emb.memory_id,
+                    emb.embedding_model,
+                    emb.embedding_dim,
+                    _floats_to_blob(emb.embedding_f32),
+                    emb.embedding_norm,
+                    _floats_to_blob(emb.normalized_f32),
+                ),
+            )
+        for mid, qrec in store.quantized.items():
+            cur.execute(
+                "INSERT OR REPLACE INTO quantized VALUES (?, ?, ?, ?, ?, ?)",
+                (qrec.memory_id, qrec.quant_bits, qrec.quant_scheme, qrec.packed_codes, qrec.embedding_dim, qrec.saturation_rate),
+            )
+        if quantizer.is_fit():
+            assert quantizer.alphas is not None and quantizer.steps is not None
+            cur.execute(
+                "INSERT OR REPLACE INTO quantizer_state VALUES (1, ?, ?, ?)",
+                (quantizer.bits, _floats_to_blob(quantizer.alphas), _floats_to_blob(quantizer.steps)),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def load_from_sqlite(path: Path) -> Tuple[MemoryStore, CalibratedScalarQuantizer]:
+    """Restore a MemoryStore and CalibratedScalarQuantizer from a SQLite database.
+
+    No re-embedding required — all embeddings and quantized codes are stored.
+    The restored state is identical to what was saved.
+    """
+    conn = sqlite3.connect(str(path))
+    store = MemoryStore()
+    quantizer: Optional[CalibratedScalarQuantizer] = None
+    try:
+        for row in conn.execute("SELECT memory_id, content, memory_type, importance_score, tags FROM memory_items"):
+            store.put_item(MemoryItem(row[0], row[1], row[2], row[3], json.loads(row[4])))
+        for row in conn.execute("SELECT memory_id, embedding_model, embedding_dim, embedding_f32, embedding_norm, normalized_f32 FROM embeddings"):
+            store.put_embedding(EmbeddingRecord(
+                memory_id=row[0],
+                embedding_model=row[1],
+                embedding_dim=row[2],
+                embedding_f32=_blob_to_floats(row[3]),
+                embedding_norm=row[4],
+                normalized_f32=_blob_to_floats(row[5]),
+            ))
+        for row in conn.execute("SELECT memory_id, quant_bits, quant_scheme, packed_codes, embedding_dim, saturation_rate FROM quantized"):
+            store.put_quantized(QuantizedRecord(
+                memory_id=row[0], quant_bits=row[1], quant_scheme=row[2],
+                packed_codes=bytes(row[3]), embedding_dim=row[4], saturation_rate=row[5],
+            ))
+        row = conn.execute("SELECT bits, alphas, steps FROM quantizer_state WHERE id=1").fetchone()
+        if row:
+            q = CalibratedScalarQuantizer(bits=row[0])
+            q.alphas = _blob_to_floats(row[1])
+            q.steps = _blob_to_floats(row[2])
+            quantizer = q
+    finally:
+        conn.close()
+    if quantizer is None:
+        quantizer = CalibratedScalarQuantizer(bits=8)
+    return store, quantizer
+
+
+def _floats_to_blob(values: List[float]) -> bytes:
+    import struct
+    return struct.pack(f"{len(values)}f", *values)
+
+
+def _blob_to_floats(blob: bytes) -> List[float]:
+    import struct
+    n = len(blob) // 4
+    return list(struct.unpack(f"{n}f", blob))
+
+
+def snapshot_items(store: MemoryStore, path: Path) -> None:
+    """Serialize raw memory items to JSONL — no embeddings, no quantized data.
+
+    The snapshot is provider-agnostic: it contains only the original text
+    payloads and metadata. Any embedding provider can restore from it.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines = []
+    for mid in store.memory_ids():
+        item = store.items[mid]
+        lines.append(json.dumps({
+            "memory_id": item.memory_id,
+            "content": item.content,
+            "memory_type": item.memory_type,
+            "importance_score": item.importance_score,
+            "tags": item.tags,
+        }))
+    path.write_text("\n".join(lines) + "\n")
+
+
+def restore_from_snapshot(path: Path, indexer: MemoryIndexer) -> None:
+    """Re-embed all items from a snapshot using the indexer's current embedder.
+
+    This is the mechanism for provider switches: the snapshot holds raw text;
+    calling this with a different embedder rebuilds the entire index in the new
+    embedding space without losing any memory content.
+    """
+    ingest_memory_jsonl(indexer, path)
 
 
 # -----------------------------------------------------------------------------
 # Demo + benchmark helpers
 # -----------------------------------------------------------------------------
 
-def build_embedder(embedder_name: str, cache_dir: Path, dim: int = 384) -> BaseEmbeddingProvider:
+def build_embedder(embedder_name: str, cache_dir: Path, dim: int = 384, mock_salt: str = "") -> BaseEmbeddingProvider:
     cache = EmbeddingCache(cache_dir)
     if embedder_name == "mock":
-        return MockEmbeddingProvider(dim=dim, cache=cache)
+        return MockEmbeddingProvider(dim=dim, cache=cache, salt=mock_salt)
     if embedder_name == "openai":
         api_key = os.environ.get("OPENAI_API_KEY")
         if not api_key:
@@ -581,6 +821,7 @@ def generate_synthetic_corpus(indexer: MemoryIndexer, n: int, seed: int = 7) -> 
         "search": ["nearest", "neighbor", "rerank", "candidate", "cosine", "index", "retrieval"],
     }
     labels = list(topics.keys())
+    rows = []
     for i in range(n):
         label = random.choice(labels)
         words = topics[label]
@@ -588,7 +829,28 @@ def generate_synthetic_corpus(indexer: MemoryIndexer, n: int, seed: int = 7) -> 
         noise_label = random.choice(labels)
         noise_words = random.sample(topics[noise_label], k=2)
         content = f"memory {i} about {label} systems with {' '.join(chosen)} and note {' '.join(noise_words)}"
-        indexer.ingest_memory(f"syn_{i}", content, memory_type=label)
+        rows.append({"memory_id": f"syn_{i}", "content": content, "memory_type": label})
+
+    # Batch-embed when using OpenAI to avoid per-item API calls
+    if isinstance(indexer.embedder, OpenAIEmbeddingProvider):
+        texts = [r["content"] for r in rows]
+        print(f"[corpus] batch-embedding {len(texts)} synthetic items ...")
+        embeddings = indexer.embedder.embed_batch(texts)
+        for row, embedding in zip(rows, embeddings):
+            item = MemoryItem(row["memory_id"], row["content"], row["memory_type"], 0.0, [])
+            indexer.store.put_item(item)
+            normalized, norm = normalize(embedding)
+            indexer.store.put_embedding(EmbeddingRecord(
+                memory_id=row["memory_id"],
+                embedding_model=indexer.embedder.model_name,
+                embedding_dim=len(embedding),
+                embedding_f32=embedding,
+                embedding_norm=norm,
+                normalized_f32=normalized,
+            ))
+    else:
+        for row in rows:
+            indexer.ingest_memory(row["memory_id"], row["content"], memory_type=row["memory_type"])
     indexer.rebuild_quantized_index()
 
 
@@ -751,6 +1013,445 @@ def run_benchmark(
         print(f"results written to:           {out_file}")
 
 
+MULTIDOMAIN_TOPICS = {
+    "code": {
+        "vocab": ["function", "class", "variable", "loop", "recursion", "async", "exception",
+                  "interface", "module", "import", "decorator", "generator", "closure", "lambda",
+                  "refactor", "lint", "compile", "runtime", "stack", "heap", "pointer", "type"],
+        "queries": [
+            "Python async function and exception handling",
+            "recursive algorithm with stack overflow risk",
+            "class interface and module import patterns",
+            "runtime heap memory allocation in compiled code",
+            "decorator and closure in functional programming",
+        ],
+    },
+    "legal": {
+        "vocab": ["contract", "clause", "liability", "plaintiff", "defendant", "statute",
+                  "jurisdiction", "precedent", "deposition", "injunction", "indemnify", "arbitration",
+                  "breach", "tort", "fiduciary", "discovery", "affidavit", "subpoena", "verdict"],
+        "queries": [
+            "contract liability clause and indemnification terms",
+            "plaintiff defendant jurisdiction and statute precedent",
+            "arbitration breach of fiduciary duty",
+            "discovery deposition affidavit subpoena procedure",
+            "tort injunction verdict and legal remedy",
+        ],
+    },
+    "news": {
+        "vocab": ["election", "parliament", "minister", "inflation", "central bank", "sanctions",
+                  "conflict", "ceasefire", "summit", "treaty", "GDP", "unemployment", "protest",
+                  "referendum", "coalition", "tariff", "deficit", "bond", "currency", "diplomat"],
+        "queries": [
+            "election parliament minister coalition government",
+            "central bank inflation interest rate GDP",
+            "conflict ceasefire summit treaty diplomat",
+            "sanctions tariff deficit currency bond",
+            "protest referendum unemployment economic policy",
+        ],
+    },
+    "medical": {
+        "vocab": ["diagnosis", "symptom", "prognosis", "biopsy", "oncology", "cardiology",
+                  "hypertension", "insulin", "antibiotic", "chemotherapy", "radiology", "pathology",
+                  "neurological", "immunology", "dosage", "placebo", "clinical trial", "remission",
+                  "metabolic", "chronic"],
+        "queries": [
+            "diagnosis prognosis symptom biopsy oncology",
+            "hypertension insulin dosage chronic metabolic",
+            "antibiotic chemotherapy clinical trial remission",
+            "cardiology neurological radiology pathology",
+            "immunology placebo clinical trial metabolic syndrome",
+        ],
+    },
+}
+
+
+def generate_multidomain_corpus(indexer: MemoryIndexer, n_per_domain: int = 250, seed: int = 42) -> Dict[str, List[str]]:
+    """Generate a corpus with entries from 4 distinct domains.
+
+    Returns a dict mapping domain -> list of memory_ids, used for recall evaluation.
+    """
+    random.seed(seed)
+    domain_ids: Dict[str, List[str]] = {domain: [] for domain in MULTIDOMAIN_TOPICS}
+    rows = []
+    mid = 0
+    for domain, spec in MULTIDOMAIN_TOPICS.items():
+        vocab = spec["vocab"]
+        for _ in range(n_per_domain):
+            n_words = random.randint(4, 7)
+            chosen = random.sample(vocab, k=min(n_words, len(vocab)))
+            content = f"{domain} note {mid}: {' '.join(chosen)}"
+            memory_id = f"md_{domain}_{mid}"
+            domain_ids[domain].append(memory_id)
+            rows.append({"memory_id": memory_id, "content": content, "memory_type": domain})
+            mid += 1
+
+    if isinstance(indexer.embedder, OpenAIEmbeddingProvider):
+        texts = [r["content"] for r in rows]
+        print(f"[multidomain] batch-embedding {len(texts)} items ...")
+        embeddings = indexer.embedder.embed_batch(texts)
+        for row, embedding in zip(rows, embeddings):
+            item = MemoryItem(row["memory_id"], row["content"], row["memory_type"], 0.0, [])
+            indexer.store.put_item(item)
+            normalized, norm = normalize(embedding)
+            indexer.store.put_embedding(EmbeddingRecord(
+                memory_id=row["memory_id"],
+                embedding_model=indexer.embedder.model_name,
+                embedding_dim=len(embedding),
+                embedding_f32=embedding,
+                embedding_norm=norm,
+                normalized_f32=normalized,
+            ))
+    else:
+        for row in rows:
+            indexer.ingest_memory(row["memory_id"], row["content"], memory_type=row["memory_type"])
+    indexer.rebuild_quantized_index()
+    return domain_ids
+
+
+def run_multidomain_benchmark(
+    bits: int = 8,
+    embedder_name: str = "mock",
+    n_per_domain: int = 250,
+    k: int = 10,
+    n_candidates: int = 50,
+    out_file: Optional[Path] = None,
+) -> None:
+    """Experiment 4: prove retrieval works across unrelated domains.
+
+    For each domain, run the domain's canonical queries and measure:
+    - within-domain recall@k: compressed+reranked retrieval vs. exact search
+    - domain purity@k: fraction of top-k results that belong to the queried domain
+
+    Pass criteria:
+    - avg within-domain recall@k >= 0.85
+    - avg domain purity@k >= 0.80
+    """
+    store, embedder, quantizer, indexer, retriever = build_system(bits=bits, embedder_name=embedder_name)
+    n_domains = len(MULTIDOMAIN_TOPICS)
+    total = n_per_domain * n_domains
+    print(f"[multidomain] Building {total}-item corpus ({n_per_domain}/domain, {n_domains} domains) ...")
+    domain_ids = generate_multidomain_corpus(indexer, n_per_domain=n_per_domain)
+
+    domain_results = {}
+    all_recalls: List[float] = []
+    all_purities: List[float] = []
+
+    for domain, spec in MULTIDOMAIN_TOPICS.items():
+        domain_set = set(domain_ids[domain])
+        recalls: List[float] = []
+        purities: List[float] = []
+        for query in spec["queries"]:
+            exact_k = retriever.exact_search(query, k=k)
+            final = retriever.retrieve(query, k=k, n_candidates=n_candidates)
+            exact_ids = [r.memory_id for r in exact_k]
+            final_ids = [r.memory_id for r in final]
+            recalls.append(recall_at_k(final_ids, exact_ids, k))
+            purity = len([mid for mid in final_ids if mid in domain_set]) / max(1, len(final_ids))
+            purities.append(purity)
+        avg_recall = sum(recalls) / len(recalls)
+        avg_purity = sum(purities) / len(purities)
+        domain_results[domain] = {"recall_at_k": avg_recall, "domain_purity_at_k": avg_purity}
+        all_recalls.append(avg_recall)
+        all_purities.append(avg_purity)
+        print(f"[multidomain] {domain:8s}  recall@{k}={avg_recall:.4f}  purity@{k}={avg_purity:.4f}")
+
+    avg_recall = sum(all_recalls) / len(all_recalls)
+    avg_purity = sum(all_purities) / len(all_purities)
+    recall_pass = avg_recall >= 0.85
+    purity_pass = avg_purity >= 0.80
+    passed = recall_pass and purity_pass
+
+    print(f"\n[multidomain] avg recall@{k}:  {avg_recall:.4f}  ({'PASS' if recall_pass else 'FAIL'} threshold=0.85)")
+    print(f"[multidomain] avg purity@{k}:  {avg_purity:.4f}  ({'PASS' if purity_pass else 'FAIL'} threshold=0.80)")
+    print(f"[multidomain] overall: {'PASS' if passed else 'FAIL'}")
+
+    result = {
+        "config": {
+            "bits": bits,
+            "embedder": embedder.provider_name(),
+            "model": embedder.model_name,
+            "n_per_domain": n_per_domain,
+            "total_memories": total,
+            "k": k,
+            "n_candidates": n_candidates,
+            "domains": list(MULTIDOMAIN_TOPICS.keys()),
+            "thresholds": {"recall_at_k": 0.85, "domain_purity_at_k": 0.80},
+        },
+        "per_domain": domain_results,
+        "summary": {
+            "avg_recall_at_k": avg_recall,
+            "avg_domain_purity_at_k": avg_purity,
+            "recall_pass": recall_pass,
+            "purity_pass": purity_pass,
+            "passed": passed,
+        },
+    }
+
+    if out_file is not None:
+        write_json_output(out_file, result)
+        print(f"[multidomain] results written to: {out_file}")
+
+
+def run_persist_test(
+    bits: int = 8,
+    n_memories: int = 500,
+    n_queries: int = 50,
+    k: int = 10,
+    n_candidates: int = 50,
+    out_file: Optional[Path] = None,
+) -> None:
+    """Prove session persistence: save to SQLite, reload with no re-embedding, retrieve identically.
+
+    Protocol:
+    1. Ingest corpus, build quantized index in memory
+    2. Measure recall@k baseline (pre-save)
+    3. Save full state to SQLite (items + embeddings + quantized codes + quantizer params)
+    4. Load from SQLite into a brand-new MemoryStore (no embedder needed)
+    5. Measure recall@k post-load using the same queries
+    6. Verify: post-load recall matches pre-save recall (within floating-point tolerance)
+    7. Verify: item count and content are byte-identical
+
+    Pass criteria:
+    - recall retention >= 1.0 (no degradation after restore)
+    - items_match: True (content lossless)
+    - quantizer_match: True (alphas and steps preserved)
+    """
+    import tempfile
+    root = Path(__file__).resolve().parent
+    cache_dir = root / ".cache" / "embeddings"
+
+    store_a = MemoryStore()
+    embedder = MockEmbeddingProvider(dim=384, cache=EmbeddingCache(cache_dir))
+    quantizer_a = CalibratedScalarQuantizer(bits=bits)
+    indexer_a = MemoryIndexer(store_a, embedder, quantizer_a)
+    retriever_a = MemoryRetriever(store_a, embedder, quantizer_a)
+
+    print(f"[persist-test] Ingesting {n_memories} memories ...")
+    generate_synthetic_corpus(indexer_a, n_memories)
+
+    query_topics = [
+        "agent memory summary retrieval",
+        "vector quantization and scalar compression",
+        "kv cache attention latency",
+        "blockchain wallet transaction risk",
+        "nearest neighbor cosine rerank index",
+    ]
+    queries = [query_topics[i % len(query_topics)] + f" sample {i}" for i in range(n_queries)]
+
+    recalls_pre: List[float] = []
+    pre_top1: List[str] = []
+    for query in queries:
+        exact_k = retriever_a.exact_search(query, k=k)
+        final = retriever_a.retrieve(query, k=k, n_candidates=n_candidates)
+        recalls_pre.append(recall_at_k([r.memory_id for r in final], [r.memory_id for r in exact_k], k))
+        pre_top1.append(final[0].memory_id if final else "")
+    avg_pre = sum(recalls_pre) / len(recalls_pre)
+    print(f"[persist-test] Pre-save  recall@{k}: {avg_pre:.4f}")
+
+    with tempfile.NamedTemporaryFile(suffix=".sqlite", delete=False) as tmp:
+        db_path = Path(tmp.name)
+
+    save_to_sqlite(store_a, quantizer_a, db_path)
+    db_size = db_path.stat().st_size
+    print(f"[persist-test] Saved to {db_path} ({db_size} bytes)")
+
+    # Reload into a completely fresh store — no embedder needed
+    store_b, quantizer_b = load_from_sqlite(db_path)
+    db_path.unlink(missing_ok=True)
+
+    retriever_b = MemoryRetriever(store_b, embedder, quantizer_b)
+
+    recalls_post: List[float] = []
+    post_top1: List[str] = []
+    for query in queries:
+        exact_k = retriever_b.exact_search(query, k=k)
+        final = retriever_b.retrieve(query, k=k, n_candidates=n_candidates)
+        recalls_post.append(recall_at_k([r.memory_id for r in final], [r.memory_id for r in exact_k], k))
+        post_top1.append(final[0].memory_id if final else "")
+    avg_post = sum(recalls_post) / len(recalls_post)
+    print(f"[persist-test] Post-load recall@{k}: {avg_post:.4f}")
+
+    items_match = set(store_a.memory_ids()) == set(store_b.memory_ids()) and all(
+        store_a.items[mid].content == store_b.items[mid].content for mid in store_a.memory_ids()
+    )
+    quantizer_match = (
+        quantizer_a.alphas is not None and quantizer_b.alphas is not None and
+        all(abs(a - b) < 1e-5 for a, b in zip(quantizer_a.alphas, quantizer_b.alphas))
+    )
+    top1_match = pre_top1 == post_top1
+    retention = avg_post / max(avg_pre, 1e-9)
+    passed = retention >= 1.0 and items_match and quantizer_match
+
+    print(f"[persist-test] Items match: {items_match}")
+    print(f"[persist-test] Quantizer match: {quantizer_match}")
+    print(f"[persist-test] Top-1 identical across all queries: {top1_match}")
+    print(f"[persist-test] Recall retention: {retention:.4f} ({'PASS' if passed else 'FAIL'})")
+
+    result = {
+        "config": {
+            "bits": bits,
+            "n_memories": n_memories,
+            "n_queries": n_queries,
+            "k": k,
+            "n_candidates": n_candidates,
+        },
+        "results": {
+            "avg_recall_pre_save": avg_pre,
+            "avg_recall_post_load": avg_post,
+            "recall_retention": retention,
+            "items_match": items_match,
+            "quantizer_match": quantizer_match,
+            "top1_identical": top1_match,
+            "db_bytes": db_size,
+            "passed": passed,
+        },
+    }
+    if out_file is not None:
+        write_json_output(out_file, result)
+        print(f"[persist-test] Results written to: {out_file}")
+
+
+def run_provider_switch_test(
+    bits: int = 8,
+    n_memories: int = 500,
+    n_queries: int = 50,
+    k: int = 10,
+    n_candidates: int = 50,
+    out_file: Optional[Path] = None,
+) -> None:
+    """Prove that memory survives a provider/model switch.
+
+    Protocol:
+    1. Ingest corpus with Provider A (mock, salt="providerA")
+    2. Measure recall@k baseline using Provider A (compressed vs. exact)
+    3. Snapshot raw items to a temporary JSONL (no embeddings)
+    4. Build a fresh system with Provider B (mock, salt="providerB") — different vector space
+    5. Restore from snapshot: re-embed all items with Provider B
+    6. Measure recall@k post-switch using Provider B (compressed vs. exact)
+    7. Report both recalls and a pass/fail (post-switch recall >= 0.90 * baseline)
+
+    The two mock providers use different hash salts, producing genuinely
+    different embedding spaces. This simulates switching from e.g. OpenAI to
+    Cohere: raw text is portable, embeddings are not — re-embedding restores
+    the index in the new space.
+    """
+    import tempfile
+
+    root = Path(__file__).resolve().parent
+    cache_dir_a = root / ".cache" / "embeddings_switch_A"
+    cache_dir_b = root / ".cache" / "embeddings_switch_B"
+
+    # -------------------------------------------------------------------------
+    # Phase A: ingest with Provider A
+    # -------------------------------------------------------------------------
+    store_a = MemoryStore()
+    embedder_a = MockEmbeddingProvider(
+        model_name="mock-provider-A",
+        dim=384,
+        cache=EmbeddingCache(cache_dir_a),
+        salt="providerA",
+    )
+    quantizer_a = CalibratedScalarQuantizer(bits=bits)
+    indexer_a = MemoryIndexer(store_a, embedder_a, quantizer_a)
+    retriever_a = MemoryRetriever(store_a, embedder_a, quantizer_a)
+
+    print(f"[provider-switch] Phase A: ingesting {n_memories} memories with provider=A ...")
+    generate_synthetic_corpus(indexer_a, n_memories)
+
+    # Benchmark recall with Provider A
+    query_topics = [
+        "agent memory summary retrieval",
+        "vector quantization and scalar compression",
+        "kv cache attention latency",
+        "blockchain wallet transaction risk",
+        "nearest neighbor cosine rerank index",
+    ]
+    queries = [query_topics[i % len(query_topics)] + f" sample {i}" for i in range(n_queries)]
+
+    recalls_a: List[float] = []
+    for query in queries:
+        exact_k = retriever_a.exact_search(query, k=k)
+        final = retriever_a.retrieve(query, k=k, n_candidates=n_candidates)
+        exact_ids = [r.memory_id for r in exact_k]
+        final_ids = [r.memory_id for r in final]
+        recalls_a.append(recall_at_k(final_ids, exact_ids, k))
+
+    avg_recall_a = sum(recalls_a) / len(recalls_a)
+    print(f"[provider-switch] Provider A recall@{k}: {avg_recall_a:.4f}")
+
+    # -------------------------------------------------------------------------
+    # Phase B: snapshot → restore with Provider B
+    # -------------------------------------------------------------------------
+    with tempfile.NamedTemporaryFile(suffix=".jsonl", delete=False) as tmp:
+        snap_path = Path(tmp.name)
+
+    snapshot_items(store_a, snap_path)
+    n_snapshotted = len(store_a.memory_ids())
+    print(f"[provider-switch] Snapshot written: {n_snapshotted} items → {snap_path}")
+
+    store_b = MemoryStore()
+    embedder_b = MockEmbeddingProvider(
+        model_name="mock-provider-B",
+        dim=384,
+        cache=EmbeddingCache(cache_dir_b),
+        salt="providerB",
+    )
+    quantizer_b = CalibratedScalarQuantizer(bits=bits)
+    indexer_b = MemoryIndexer(store_b, embedder_b, quantizer_b)
+    retriever_b = MemoryRetriever(store_b, embedder_b, quantizer_b)
+
+    print("[provider-switch] Phase B: restoring with provider=B (different vector space) ...")
+    restore_from_snapshot(snap_path, indexer_b)
+    snap_path.unlink(missing_ok=True)
+
+    n_restored = len(store_b.memory_ids())
+    print(f"[provider-switch] Restored {n_restored} items with provider=B")
+
+    # Benchmark recall with Provider B (same queries, B's own exact search as oracle)
+    recalls_b: List[float] = []
+    for query in queries:
+        exact_k = retriever_b.exact_search(query, k=k)
+        final = retriever_b.retrieve(query, k=k, n_candidates=n_candidates)
+        exact_ids = [r.memory_id for r in exact_k]
+        final_ids = [r.memory_id for r in final]
+        recalls_b.append(recall_at_k(final_ids, exact_ids, k))
+
+    avg_recall_b = sum(recalls_b) / len(recalls_b)
+    retention = avg_recall_b / max(avg_recall_a, 1e-9)
+    passed = retention >= 0.90
+
+    print(f"[provider-switch] Provider B recall@{k}: {avg_recall_b:.4f}")
+    print(f"[provider-switch] Recall retention after switch: {retention:.4f} ({'PASS' if passed else 'FAIL'} threshold=0.90)")
+    print(f"[provider-switch] Items: snapshotted={n_snapshotted} restored={n_restored} (content lossless: {n_snapshotted == n_restored})")
+
+    result = {
+        "config": {
+            "bits": bits,
+            "n_memories": n_memories,
+            "n_queries": n_queries,
+            "k": k,
+            "n_candidates": n_candidates,
+            "provider_a": embedder_a.model_name,
+            "provider_b": embedder_b.model_name,
+            "threshold": 0.90,
+        },
+        "results": {
+            "avg_recall_a": avg_recall_a,
+            "avg_recall_b": avg_recall_b,
+            "recall_retention": retention,
+            "passed": passed,
+            "items_snapshotted": n_snapshotted,
+            "items_restored": n_restored,
+            "content_lossless": n_snapshotted == n_restored,
+        },
+    }
+
+    if out_file is not None:
+        write_json_output(out_file, result)
+        print(f"[provider-switch] Results written to: {out_file}")
+
+
 # -----------------------------------------------------------------------------
 # CLI
 # -----------------------------------------------------------------------------
@@ -775,6 +1476,30 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
     bench.add_argument("--query-file", type=Path, default=None)
     bench.add_argument("--out", type=Path, default=None)
 
+    persist = sub.add_parser("persist-test", help="prove SQLite save/load round-trip preserves retrieval exactly")
+    persist.add_argument("--bits", type=int, default=8, choices=[4, 8])
+    persist.add_argument("--memories", type=int, default=500)
+    persist.add_argument("--queries", type=int, default=50)
+    persist.add_argument("--k", type=int, default=10)
+    persist.add_argument("--candidates", type=int, default=50)
+    persist.add_argument("--out", type=Path, default=None)
+
+    multi = sub.add_parser("multidomain", help="Experiment 4: recall across code/legal/news/medical domains")
+    multi.add_argument("--bits", type=int, default=8, choices=[4, 8])
+    multi.add_argument("--embedder", type=str, default="mock", choices=["mock", "openai"])
+    multi.add_argument("--n-per-domain", type=int, default=250)
+    multi.add_argument("--k", type=int, default=10)
+    multi.add_argument("--candidates", type=int, default=50)
+    multi.add_argument("--out", type=Path, default=None)
+
+    switch = sub.add_parser("provider-switch", help="prove memory survives a provider/model switch")
+    switch.add_argument("--bits", type=int, default=8, choices=[4, 8])
+    switch.add_argument("--memories", type=int, default=500)
+    switch.add_argument("--queries", type=int, default=50)
+    switch.add_argument("--k", type=int, default=10)
+    switch.add_argument("--candidates", type=int, default=50)
+    switch.add_argument("--out", type=Path, default=None)
+
     return parser.parse_args(argv)
 
 
@@ -797,6 +1522,39 @@ def main(argv: List[str]) -> int:
             n_candidates=args.candidates,
             memory_file=args.memory_file,
             query_file=args.query_file,
+            out_file=args.out,
+        )
+        return 0
+
+    if cmd == "persist-test":
+        run_persist_test(
+            bits=args.bits,
+            n_memories=args.memories,
+            n_queries=args.queries,
+            k=args.k,
+            n_candidates=args.candidates,
+            out_file=args.out,
+        )
+        return 0
+
+    if cmd == "multidomain":
+        run_multidomain_benchmark(
+            bits=args.bits,
+            embedder_name=args.embedder,
+            n_per_domain=args.n_per_domain,
+            k=args.k,
+            n_candidates=args.candidates,
+            out_file=args.out,
+        )
+        return 0
+
+    if cmd == "provider-switch":
+        run_provider_switch_test(
+            bits=args.bits,
+            n_memories=args.memories,
+            n_queries=args.queries,
+            k=args.k,
+            n_candidates=args.candidates,
             out_file=args.out,
         )
         return 0
