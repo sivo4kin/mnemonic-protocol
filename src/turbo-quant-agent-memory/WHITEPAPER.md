@@ -519,20 +519,22 @@ This architecture is V1.1 scope. V1.0 SDK ships single-writer only.
 
 ## 8. Comparison with Related Work
 
-| System | Persistent | Verifiable | Compressed | Provider-independent | Open embedder |
-|---|---|---|---|---|---|
-| ChatGPT Memory | ✓ | ✗ | N/A | ✗ | ✗ |
-| LangChain + Pinecone | ✓ | ✗ | ✗ | ✗ | Optional |
-| MemGPT / Letta | ✓ | ✗ | ✗ | Partially | Optional |
-| IPFS + custom RAG | ✓ | Partially | ✗ | ✓ | Optional |
-| D-RAG (Lu et al., 2025) | ✓ | ✓ (reliability) | ✗ | ✓ | N/A |
-| V3DB (2026) | ✓ | ✓ (ZK retrieval) | ✗ | Partially | N/A |
-| Walrus + custom RAG | ✓ | ✓ (staking) | ✗ | ✓ | Optional |
-| **Mnemonic (this work)** | **✓** | **✓** | **✓** | **✓** | **✓** |
+| System | Persistent | Verifiable | Compressed | Provider-independent | Open embedder | Agent-payable |
+|---|---|---|---|---|---|---|
+| ChatGPT Memory | ✓ | ✗ | N/A | ✗ | ✗ | ✗ |
+| LangChain + Pinecone | ✓ | ✗ | ✗ | ✗ | Optional | ✗ |
+| MemGPT / Letta | ✓ | ✗ | ✗ | Partially | Optional | ✗ |
+| IPFS + custom RAG | ✓ | Partially | ✗ | ✓ | Optional | ✗ |
+| zkTAM / Kinic-CLI (ICME, 2025) | ✓ | ✓ (ZK embedding) | ✗ | ✗ (ICP-locked) | ✗ | ✗ |
+| D-RAG (Lu et al., 2025) | ✓ | ✓ (reliability) | ✗ | ✓ | N/A | ✗ |
+| V3DB (2026) | ✓ | ✓ (ZK retrieval) | ✗ | Partially | N/A | ✗ |
+| Walrus + custom RAG | ✓ | ✓ (staking) | ✗ | ✓ | Optional | ✗ |
+| **Mnemonic (this work)** | **✓** | **✓** | **✓** | **✓** | **✓** | **✓ (x402)** |
 
 TurboQuant (Zandieh & Mirrokni, 2025) provides the compression theory.
 Mnemonic provides the systems architecture that makes compressed memory
-verifiable, portable, and economically viable.
+verifiable, portable, and economically viable — and the only system in
+this table designed for autonomous agent-to-agent payment at the HTTP layer.
 
 **V3DB (2026):** The closest system to answering "trustless retrieval" — ZK
 proofs of ANN-retrieval correctness against a committed corpus snapshot,
@@ -560,6 +562,41 @@ addresses single-agent *memory continuity* with compression. D-RAG has no
 compressed index; Mnemonic has no reliability oracle yet. The D-RAG reliability
 oracle design is adopted as Mnemonic's blueprint for multi-party adversarial
 mitigations (ADR-018).
+
+**Closest competitor — zkTAM (ICME Labs, 2025):** ICME's Kinic-CLI is the
+most direct live competitor. Their thesis — "trustless agents can't work
+without trustless agentic memory" — is identical to Mnemonic's. Where they
+diverge: zkTAM uses JOLT Atlas ZK proofs to verify *embedding correctness*
+(the embedding model ran faithfully on the stated input); Mnemonic uses
+SHA3-256 hash commitment to verify *memory integrity* (the stored blob was
+not altered). ZK proofs are stronger but orders of magnitude more expensive
+in proving time and require ICP infrastructure. Mnemonic's hash commitment
+is weaker in the ZK sense but runs in seconds on any hardware and is
+chain-agnostic. The strategic bet: agent builders need proof of *memory
+integrity* first; *embedding correctness* proofs are a V3+ research direction
+(see ADR-009 and Section 9.2 Q3). zkTAM has no compression; no provider
+portability; no x402 payment layer (see below).
+
+**Agent-payable APIs — x402 and ERC-8001:** x402 is a revival of HTTP 402
+"Payment Required" as a machine-native micropayment protocol. An agent
+hitting a metered API endpoint receives a 402 response with payment details;
+its wallet pays autonomously in USDC (or equivalent), then retries. No human
+billing, no API keys required. ERC-8001 provides the on-chain agent identity
+and authorization layer that x402 transactions settle against — an agent
+registers a spending commitment on-chain; API servers validate against it
+before serving. Together they define the economic primitive for
+agent-to-agent commerce: infrastructure that agents can discover and pay for
+without human intermediaries.
+
+Mnemonic is designed to be x402-compatible from V1. The `/api/search`,
+`/api/commit`, and `/api/switch-provider` endpoints are natural metering
+points. `/api/verify` remains free — cryptographic auditability must not be
+paywalled. This creates two distinct monetization paths: (1) Mnemonic-hosted
+node charges agents directly per operation via x402; (2) agent builders run
+their own Mnemonic nodes, earn x402 revenue from agents using their node,
+and pay a protocol fee settled via ERC-8001. This is the Infura/Alchemy
+model applied to verifiable agent memory. See ADR-019 for the full
+architecture decision.
 
 ---
 
@@ -652,6 +689,7 @@ mitigations (ADR-018).
 - ✅ Validate with canonical open embedder — `nomic-embed-text-v1.5` passes all gates (ADR-017)
 - Memory write semantics spec (merge / append / dedup policy)
 - **Live demo** — interactive web UI showcasing the full pipeline: search → compression comparison → provider switch → on-chain commitment → verification. Local-first (`python -m mnemonic serve`), investigative journalism demo corpus. See `DEMO_SPEC.md`.
+- **x402 metered API** (ADR-019) — `mnemonic serve --payment-required` mode: agents pay per search/commit autonomously via HTTP 402; `/api/verify` permanently free. Enables agent-native monetization without subscriptions or API key management.
 
 ### Phase 5 — V2 App: Personal Research Assistant + Multi-party Hardening
 - Agent that accumulates research across sessions and providers
@@ -662,6 +700,11 @@ mitigations (ADR-018).
   scoring → weighted retrieval filtering — following D-RAG's proven pattern
   (arXiv:2511.07577, +10.7% quality improvement in adversarial conditions)
 - Adversarial robustness benchmark: target ≥+10% vs. unprotected baseline
+- **Node operator model** (ADR-019): agent builders run Mnemonic nodes, earn
+  x402 revenue from agents, pay protocol fee settled via ERC-8001 on-chain
+  agent identity. ERC-8001 writer identity maps directly to ADR-018 per-writer
+  reliability scoring — an agent that registers on-chain and commits to a
+  spending floor is also automatically tracked for contribution quality.
 
 ---
 
@@ -700,6 +743,12 @@ verified by anyone**.
 5. Nomic AI. *nomic-embed-text-v1.5.* https://huggingface.co/nomic-ai/nomic-embed-text-v1.5
 6. Packer, C. et al. (2023). *MemGPT: Towards LLMs as Operating Systems.*
 7. Kusupati, A. et al. (2022). *Matryoshka Representation Learning.*
+8. ICME Labs. *Trustless Agents Can't Work Without Trustless Agentic Memory.*
+   blog.icme.io, 2025. (zkTAM / Kinic-CLI)
+9. Coinbase. *x402: HTTP 402 Payment Required for Machine-to-Machine Payments.*
+   x402.org, 2025.
+10. Ethereum Improvement Proposal 8001. *Agent Commerce Standard.*
+    eips.ethereum.org/EIPS/eip-8001, 2025.
 
 ---
 

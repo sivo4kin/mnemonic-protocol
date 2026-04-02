@@ -80,8 +80,14 @@ blob, hashes it, and shows:
 - Step-by-step commitment animation (encrypt → hash → upload → anchor)
 - Final commitment card: hash, Solana tx, Arweave tx, cost
 - "This memory state is now permanent and tamper-evident."
+- **Agent economics panel:** "If your agent runs 100 searches/day, it pays
+  $3/month autonomously via x402 — no invoices, no API keys, no human in
+  the billing loop. Permanent storage costs $0.04 once. The agent owns its
+  memory and pays for it directly."
 
-**What this proves:** On-chain commitment is real, cheap, and fast.
+**What this proves:** On-chain commitment is real, cheap, and fast. And
+the economics work for agents natively — this is not a SaaS product with
+agent access bolted on; it is infrastructure that agents pay for themselves.
 
 ### Act 5 — Verify
 
