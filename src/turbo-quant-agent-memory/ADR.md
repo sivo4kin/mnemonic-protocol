@@ -716,3 +716,51 @@ nomic documentation, and local embedding cache. Updated CLI, benchmark harness, 
 
 **Results files:** `nomic_results_{1k,5k}_{4,8}bit.json`,
 `nomic_multidomain_8bit.json`, `nomic_persist_8bit.json`
+
+---
+
+## ADR-018: Reliability Oracle — Design Decision from D-RAG Analysis
+
+**Date:** 2026-04-02
+**Status:** Accepted (design decision; implementation deferred to V1.1 / multi-party phase)
+**Research:** `research/turbo-quant-agent-memory/DRAG_ANALYSIS.md`, `src/turbo-quant-agent-memory/DRAG_ANALYSIS.md`
+**Paper:** Lu et al., "A Decentralized Retrieval Augmented Generation System with Source Reliabilities Secured on Blockchain," arXiv:2511.07577
+
+**Context:**
+
+Analysis of the D-RAG paper (arXiv:2511.07577) reveals a directly applicable design pattern for Mnemonic's malicious collaborator mitigations (ADR-009). D-RAG demonstrates that blockchain-anchored reliability scoring of data sources produces a +10.7% improvement in generation quality under adversarial/unreliable data conditions. Their approach: smart contracts record per-source reliability scores based on downstream quality feedback; retrieved documents are weighted by on-chain credibility.
+
+Mnemonic's planned mitigations (ADR-009) include per-entry signing — but signing alone proves identity, not quality. The D-RAG paper shows that tracking *reliability* (quality over time) on-chain is both feasible and productively valuable.
+
+**Decision:**
+
+Adopt the **reliability oracle pattern** as the implementation blueprint for Mnemonic's multi-party adversarial mitigations:
+
+1. **Per-delta reliability score**: Each writer's delta commits are associated with a writer identity (Solana pubkey). After reads, retrieval quality attributed to each writer's contributions can be scored (e.g., which writer's memories were retrieved and used, vs. which were retrieved and ignored as irrelevant).
+
+2. **On-chain reliability record**: Per-writer reliability scores are recorded on-chain (Solana PDA or memo extension). Structure: `{ writer_pubkey, contributions: N, avg_retrieval_quality: F, last_updated: slot }`. This is lightweight and batched — one update per compaction cycle, not per memory item.
+
+3. **Weighted retrieval**: During candidate generation, items from low-reliability writers are down-weighted or excluded. The threshold is configurable by the namespace owner.
+
+4. **Batched updates**: D-RAG achieves 56% cost savings via batched reliability score updates. Same approach here — score updates are batched per compaction cycle, not written per-item.
+
+**Why this pattern specifically:**
+- It is production-proven (D-RAG published results)
+- It extends naturally from per-entry signing (identity → reliability) without changing the signing protocol
+- It does not require smart contract computation — reliability scores can be computed off-chain and committed on-chain as a simple memo, same as memory commitments
+- It resolves both the ranking manipulation and quantization poisoning threats (ADR-009): low-reliability writers can be filtered before their data reaches the quantizer calibration step
+
+**What this does NOT change for V1:**
+- V1 is single-writer. This pattern is explicitly for the multi-party shared pool (V1.1+).
+- The per-entry signing planned for V1 (ADR-009) is the prerequisite — identity must be established before reliability can be tracked.
+- Quantizer calibration lock (ADR-006) remains the primary quantization poisoning mitigation for V1.
+
+**Key finding from D-RAG that validates Mnemonic's architecture:**
+- D-RAG independently validates: blockchain as trust layer (not storage), off-chain blobs + on-chain hash, batched commits for cost efficiency. Mnemonic's design is consistent with a published, peer-reviewed system.
+- D-RAG's +10.7% improvement under adversarial conditions is a benchmark for Mnemonic to target when validating its own adversarial robustness in Phase 4/5.
+
+**Consequences:**
+- Reliability oracle is added to the Phase 5 (V2 App / Multi-agent) implementation plan
+- ADR-009 mitigations are now sequenced: (1) per-entry signing → (2) per-writer reliability scoring → (3) weighted retrieval filtering
+- `DRAG_ANALYSIS.md` is the backing research document; cite arXiv:2511.07577 in the whitepaper
+- D-RAG is added to the whitepaper's related work section as the closest published prior work

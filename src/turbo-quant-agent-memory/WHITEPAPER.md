@@ -450,9 +450,36 @@ committing daily via deltas: ~$1–3/month.
 | Ranking manipulation (crafted embeddings) | Per-entry signing; outlier rejection at ingest | Designed, not implemented |
 | Quantization calibration poisoning | Lock quantizer after initial fit; reject recalibration from writes | Designed, not implemented |
 | Payload injection (malicious retrieved content) | Input normalization at ingest | Designed, not implemented |
+| Low-quality / adversarial writer contributions | Per-writer reliability oracle (see below) | Designed, not implemented |
 
 The unimplemented mitigations are required before any multi-party production
 deployment. They are not blocking for single-user V1.
+
+### 6.5 Reliability oracle (multi-party)
+
+For shared multi-agent memory pools, per-entry signing alone proves *identity*
+but not *quality*. Lu et al. (2025, arXiv:2511.07577) demonstrate that
+on-chain reliability scoring of data sources produces a **+10.7% improvement**
+in generation quality under adversarial/unreliable conditions — a directly
+applicable result for Mnemonic's malicious collaborator threat model.
+
+The Mnemonic reliability oracle (ADR-018) extends per-entry signing with
+per-writer quality tracking:
+
+1. Each delta commit is signed by the writer's Solana pubkey (identity layer)
+2. After retrieval, quality signals (was this memory retrieved? was it used?)
+   are attributed back to the contributing writer
+3. Per-writer reliability scores are batched and committed on-chain once per
+   compaction cycle (not per-item — same batching strategy as D-RAG's 56% cost
+   reduction)
+4. During candidate generation, contributions from low-reliability writers are
+   down-weighted or filtered
+
+This is the sequenced implementation plan for ADR-009 mitigations:
+**(1) per-entry signing → (2) per-writer reliability scoring → (3) weighted retrieval filtering.**
+
+Scope: V1.1+ (multi-party phase). V1.0 is single-writer; this mitigation is
+not required until shared pools are enabled.
 
 ### 6.4 Multi-party access (V2)
 
@@ -498,11 +525,26 @@ This architecture is V1.1 scope. V1.0 SDK ships single-writer only.
 | LangChain + Pinecone | ✓ | ✗ | ✗ | ✗ | Optional |
 | MemGPT / Letta | ✓ | ✗ | ✗ | Partially | Optional |
 | IPFS + custom RAG | ✓ | Partially | ✗ | ✓ | Optional |
+| D-RAG (Lu et al., 2025) | ✓ | ✓ (reliability) | ✗ | ✓ | N/A |
 | **Mnemonic (this work)** | **✓** | **✓** | **✓** | **✓** | **✓** |
 
 TurboQuant (Zandieh & Mirrokni, 2025) provides the compression theory.
 Mnemonic provides the systems architecture that makes compressed memory
 verifiable, portable, and economically viable.
+
+**Closest related work — D-RAG (arXiv:2511.07577):** Lu et al. propose a
+decentralized RAG system where multiple independent nodes contribute documents,
+with per-source reliability scores recorded via blockchain smart contracts.
+D-RAG independently validates three of Mnemonic's core architectural bets:
+(1) blockchain belongs in the trust layer, not the storage layer;
+(2) off-chain content-addressed blobs + on-chain hash commitment is the right
+layering; (3) batched blockchain writes are economically necessary (D-RAG
+reports 56% cost savings from batching). Where D-RAG and Mnemonic diverge:
+D-RAG addresses multi-source *document retrieval* for LLM generation; Mnemonic
+addresses single-agent *memory continuity* with compression. D-RAG has no
+compressed index; Mnemonic has no reliability oracle yet. The D-RAG reliability
+oracle design is adopted as Mnemonic's blueprint for multi-party adversarial
+mitigations (ADR-018).
 
 ---
 
@@ -574,11 +616,15 @@ verifiable, portable, and economically viable.
 - Memory write semantics spec (merge / append / dedup policy)
 - **Live demo** — interactive web UI showcasing the full pipeline: search → compression comparison → provider switch → on-chain commitment → verification. Local-first (`python -m mnemonic serve`), investigative journalism demo corpus. See `DEMO_SPEC.md`.
 
-### Phase 5 — V2 App: Personal Research Assistant
+### Phase 5 — V2 App: Personal Research Assistant + Multi-party Hardening
 - Agent that accumulates research across sessions and providers
-- Co-researcher sharing (multi-party key wrapping)
+- Co-researcher sharing (multi-party key wrapping, ADR-006)
 - Demo: switch from Claude to GPT-4 mid-project — context intact
 - On-chain proof of what was known and when (academic / journalistic priority)
+- **Reliability oracle** (ADR-018): per-entry signing → per-writer reliability
+  scoring → weighted retrieval filtering — following D-RAG's proven pattern
+  (arXiv:2511.07577, +10.7% quality improvement in adversarial conditions)
+- Adversarial robustness benchmark: target ≥+10% vs. unprotected baseline
 
 ---
 
@@ -609,11 +655,14 @@ verified by anyone**.
 
 1. Zandieh, A. & Mirrokni, V. (2025). *TurboQuant: Online Vector Quantization
    with Near-Optimal Distortion Rate.* arXiv:2504.19874.
-2. Arweave Protocol. https://arweave.org
-3. Solana Documentation. https://solana.com/docs
-4. Nomic AI. *nomic-embed-text-v1.5.* https://huggingface.co/nomic-ai/nomic-embed-text-v1.5
-5. Packer, C. et al. (2023). *MemGPT: Towards LLMs as Operating Systems.*
-6. Kusupati, A. et al. (2022). *Matryoshka Representation Learning.*
+2. Lu, Y., Tang, W., Johnson, M., Jung, T. & Jiang, M. (2025). *A Decentralized
+   Retrieval Augmented Generation System with Source Reliabilities Secured on
+   Blockchain.* arXiv:2511.07577.
+3. Arweave Protocol. https://arweave.org
+4. Solana Documentation. https://solana.com/docs
+5. Nomic AI. *nomic-embed-text-v1.5.* https://huggingface.co/nomic-ai/nomic-embed-text-v1.5
+6. Packer, C. et al. (2023). *MemGPT: Towards LLMs as Operating Systems.*
+7. Kusupati, A. et al. (2022). *Matryoshka Representation Learning.*
 
 ---
 
