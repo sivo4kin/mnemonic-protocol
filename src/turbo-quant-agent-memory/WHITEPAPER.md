@@ -590,13 +590,22 @@ without human intermediaries.
 
 Mnemonic is designed to be x402-compatible from V1. The `/api/search`,
 `/api/commit`, and `/api/switch-provider` endpoints are natural metering
-points. `/api/verify` remains free — cryptographic auditability must not be
-paywalled. This creates two distinct monetization paths: (1) Mnemonic-hosted
-node charges agents directly per operation via x402; (2) agent builders run
-their own Mnemonic nodes, earn x402 revenue from agents using their node,
-and pay a protocol fee settled via ERC-8001. This is the Infura/Alchemy
-model applied to verifiable agent memory. See ADR-019 for the full
-architecture decision.
+points. `/api/verify` is permanently free — cryptographic auditability must
+never be paywalled; this is a protocol invariant, not a pricing decision.
+
+**Distribution model: node operators only.** Mnemonic the organization does
+not run any serving infrastructure. The `mnemonic serve` binary IS the node;
+any agent builder or infrastructure operator runs it. Agents pay node operators
+directly via x402 (USDC-SPL on Solana mainnet). Node operators pay a protocol
+fee (suggested 10%) to the Mnemonic treasury PDA on Solana. Revenue accrues to
+the protocol at the network layer — the Infura/Alchemy model applied to
+verifiable agent memory.
+
+**Seamless agent integration** is provided by the `AgentMemory` SDK class:
+a single abstraction that handles node discovery (via on-chain Solana registry),
+x402 payment (transparent to the developer), and memory operations. An agent
+builder adds memory in three lines; x402 economics are invisible until the
+node's monthly statement. See ADR-019 for the full architecture decision.
 
 ---
 
@@ -689,7 +698,9 @@ architecture decision.
 - ✅ Validate with canonical open embedder — `nomic-embed-text-v1.5` passes all gates (ADR-017)
 - Memory write semantics spec (merge / append / dedup policy)
 - **Live demo** — interactive web UI showcasing the full pipeline: search → compression comparison → provider switch → on-chain commitment → verification. Local-first (`python -m mnemonic serve`), investigative journalism demo corpus. See `DEMO_SPEC.md`.
-- **x402 metered API** (ADR-019) — `mnemonic serve --payment-required` mode: agents pay per search/commit autonomously via HTTP 402; `/api/verify` permanently free. Enables agent-native monetization without subscriptions or API key management.
+- **`AgentMemory` SDK class** (ADR-019) — primary integration surface for agent builders. Wraps node discovery, x402 payment, and all memory operations. Agents get memory in three lines; economics are handled transparently.
+- **x402 metered API** (ADR-019) — `mnemonic serve --payment-required` mode: agents pay per search/commit autonomously via HTTP 402 (USDC-SPL, Solana mainnet); `/api/verify` permanently free. Node operators run the serving layer; Mnemonic takes a protocol fee only.
+- **On-chain node registry** — Solana PDA per operator. `AgentMemory(network=True)` queries registry, picks fastest/cheapest live node, fails over automatically.
 
 ### Phase 5 — V2 App: Personal Research Assistant + Multi-party Hardening
 - Agent that accumulates research across sessions and providers
@@ -700,11 +711,12 @@ architecture decision.
   scoring → weighted retrieval filtering — following D-RAG's proven pattern
   (arXiv:2511.07577, +10.7% quality improvement in adversarial conditions)
 - Adversarial robustness benchmark: target ≥+10% vs. unprotected baseline
-- **Node operator model** (ADR-019): agent builders run Mnemonic nodes, earn
-  x402 revenue from agents, pay protocol fee settled via ERC-8001 on-chain
-  agent identity. ERC-8001 writer identity maps directly to ADR-018 per-writer
-  reliability scoring — an agent that registers on-chain and commits to a
-  spending floor is also automatically tracked for contribution quality.
+- **Node operator network expansion**: on-chain registry grows; operators
+  compete on latency, price, and uptime. ERC-8001 EVM agent interoperability:
+  cross-chain agents bridge USDC to Solana and use the same endpoints. ERC-8001
+  agent identity maps directly to ADR-018 per-writer reliability scoring —
+  one on-chain registration covers both payment authorization and contribution
+  quality tracking.
 
 ---
 

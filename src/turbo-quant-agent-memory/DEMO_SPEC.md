@@ -72,7 +72,7 @@ text is the portable unit. This is the V2 product promise demonstrated.
 The visitor clicks "Commit to chain." The system encrypts the memory
 blob, hashes it, and shows:
 - The SHA3-256 hash
-- The (simulated or real devnet) Solana transaction
+- The Solana mainnet transaction ID (clickable Solscan link)
 - The Arweave transaction ID
 - Total cost: "$0.04 for 1000 memories, permanent."
 
@@ -158,7 +158,7 @@ works before investing in infrastructure.
          │             │             │
    ┌─────▼─────┐ ┌────▼────┐ ┌─────▼──────┐
    │  SQLite   │ │ Nomic   │ │  Solana    │
-   │  (local)  │ │ (local) │ │  devnet    │
+   │  (local)  │ │ (local) │ │  mainnet   │
    └───────────┘ └─────────┘ └────────────┘
 ```
 
@@ -170,7 +170,7 @@ works before investing in infrastructure.
 | `/api/search/exact` | POST | Query → brute-force exact → results (for comparison) |
 | `/api/stats` | GET | Corpus size, dimensions, compression ratio, quantizer info |
 | `/api/switch-provider` | POST | Snapshot → re-embed → rebuild index |
-| `/api/commit` | POST | Encrypt → hash → (simulated) Arweave + Solana commit |
+| `/api/commit` | POST | Encrypt → hash → Arweave upload + Solana mainnet memo |
 | `/api/verify` | POST | Recompute hash → compare against commitment |
 
 **Frontend:** Single-page app. Minimal — no framework needed for Phase 1.
@@ -180,7 +180,7 @@ if needed.
 ### Phase 2: Hosted (optional, post-V1)
 
 Deploy backend on Fly.io or Railway. Frontend on Vercel or Cloudflare
-Pages. Add real Solana devnet transactions and Arweave uploads.
+Pages. Solana mainnet + Arweave already active from Phase 1.
 
 ### Phase 3: Solana dApp (V2 scope)
 
@@ -229,8 +229,8 @@ Output:
   ACT 4: Committing to chain...
          Encrypt: AES-256-GCM ✓
          Hash: SHA3-256 = a1b2c3...
-         Arweave: [simulated] tx_abc123
-         Solana: [simulated] tx_def456
+         Arweave: tx_abc123 (permanent)
+         Solana:  tx_def456 (mainnet, Solscan ↗)
          Cost: $0.04 for 1000 memories. Permanent.
 
   ACT 5: Verifying...
@@ -285,7 +285,7 @@ instructions for running the demo.
 | Visitor understands value prop | Within 60 seconds of landing |
 | Demo runs with zero config | `pip install mnemonic && mnemonic serve` |
 | Works without internet | Yes (mock commit mode, local embeddings) |
-| Works with real chain | Yes (Solana devnet + Arweave, optional) |
+| Works with real chain | Yes (Solana mainnet + Arweave, default) |
 
 ---
 

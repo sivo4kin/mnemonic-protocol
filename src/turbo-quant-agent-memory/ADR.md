@@ -767,111 +767,175 @@ Adopt the **reliability oracle pattern** as the implementation blueprint for Mne
 
 ---
 
-## ADR-019: Agent Commerce Model — x402 + ERC-8001
+## ADR-019: Agent Commerce Model — x402 + ERC-8001 + Node Operator Distribution
 
 **Date:** 2026-04-02
-**Status:** Accepted (architecture decision; x402 metering deferred to V1.1; node operator model scoped to V2)
+**Status:** Accepted
+**Revision:** 2 (2026-04-02) — mainnet Solana confirmed, no self-hosting, seamless agent integration, node operator model promoted to V1.
 
 **Context:**
 
 Mnemonic's primary consumers are AI agents, not humans. Existing monetization
-primitives (subscription billing, API keys, monthly invoices) are designed for
-human developers. Two emerging standards provide a machine-native alternative:
+primitives (subscription billing, API keys, monthly invoices) require human
+intervention at the billing layer. As multi-agent systems scale, human-mediated
+billing becomes a structural bottleneck — an agent fleet of 1000 agents cannot
+manage 1000 subscriptions.
 
-- **x402** (Coinbase, 2025): Revival of HTTP 402 "Payment Required" as a
-  micropayment protocol. Server returns 402 with payment details (token,
-  amount, chain, recipient address). Agent's wallet pays autonomously in USDC,
-  then retries. No human in the loop. No API key management. Works at the HTTP
-  middleware layer — any FastAPI/Flask endpoint can be metered with a decorator.
+Two standards provide the machine-native alternative:
 
-- **ERC-8001** (Ethereum, 2025): On-chain agent commerce standard. Defines how
-  AI agents register payment intents and spending commitments on-chain. Provides
-  the identity and authorization layer that x402 HTTP transactions settle
-  against. An agent that registers via ERC-8001 expresses a verifiable spending
-  commitment — the API server validates before serving, no prior account setup
-  needed.
+- **x402** (Coinbase, 2025): HTTP 402 "Payment Required" as a micropayment
+  protocol. Server returns `402` with a payment descriptor (token, amount,
+  chain, recipient). Agent's wallet pays autonomously, retries with proof.
+  No API keys. No accounts. No invoices. Works as HTTP middleware on any
+  FastAPI/Flask endpoint.
 
-Mnemonic's `mnemonic serve` backend (DEMO_SPEC.md Phase 1) is the natural
-integration point. The 6 API endpoints already map cleanly to two tiers:
-metered (search, commit, switch-provider) and free (verify, stats).
+- **ERC-8001** (Ethereum EIP, 2025): On-chain agent commerce standard. Defines
+  agent identity registration, spending commitments, and settlement. Provides
+  the authorization layer that x402 transactions settle against. Mnemonic
+  implements the equivalent pattern on Solana natively (Solana PDAs + memo
+  program), with ERC-8001 as the interoperability bridge for EVM-native agents.
 
-Additionally, ERC-8001 on-chain agent identity is architecturally consistent
-with ADR-018's per-writer reliability scoring. An agent that registers on-chain
-and commits to a spending floor can simultaneously serve as a writer identity
-for the reliability oracle — one identity primitive for both payment and trust.
+**V1 chain commitment: Solana mainnet.** All memory commitments (SHA3-256 hash
+anchoring + Arweave upload) use Solana mainnet from V1. No devnet. No simulated
+transactions. The "$0.04 for 1000 memories. Permanent." claim must be backed
+by real mainnet transactions.
+
+**Mnemonic does not run infrastructure.** Self-hosting violates the protocol's
+decentralization thesis. All serving is done by node operators. Mnemonic
+provides the SDK and protocol specification only.
 
 **Decision:**
 
-Adopt x402 + ERC-8001 as Mnemonic's canonical agent commerce architecture.
+**1. Distribution model: node operators only.**
 
-**Metering model:**
+The SDK (`python -m mnemonic serve`) IS the node. Any agent builder or
+infrastructure operator can run a Mnemonic node. Mnemonic the organization
+does not run any node that agents depend on. Revenue to Mnemonic comes from
+the protocol fee, not from serving.
 
-| Endpoint | x402 price (suggested) | Rationale |
-|----------|----------------------|-----------|
-| `/api/search` | $0.001 USDC | ~1/5 of an embedding call; scales to agent fleet |
-| `/api/commit` (1k memories) | $0.05 USDC | Arweave raw cost ($0.04) + relay margin |
-| `/api/commit` (10k memories) | $0.45 USDC | Same margin structure |
-| `/api/switch-provider` | $0.10 USDC | Re-embed is the expensive operation |
-| `/api/verify` | Free (always) | Auditability must not be paywalled |
-| `/api/stats` | Free (always) | Discovery and transparency |
+Three deployment modes, all running the same `mnemonic serve` binary:
 
-At 100 searches/day: agent spends ~$0.10/day = ~$3/month. No subscription,
-no dashboard, no human approval. Scales from a single agent to a fleet without
-any change in billing infrastructure.
+| Mode | Who runs it | Storage | x402 enabled |
+|------|-------------|---------|--------------|
+| Local-embedded | The agent itself | Local disk + optional Arweave | No (free) |
+| Operator-hosted | Third-party operators | Arweave + Solana mainnet | Yes |
+| Self-hosted | Agent builder for their own fleet | Arweave + Solana mainnet | Optional |
 
-**Two monetization paths:**
+**2. Seamless agent integration: `AgentMemory` SDK class.**
 
-1. **Direct agent sales (x402 hosted node):** Mnemonic runs a hosted node.
-   Agents discover it (via agent registry or documentation), pay per operation
-   via x402. Revenue grows linearly with agent usage. No sales funnel.
+The primary integration surface is a single class that handles node discovery,
+x402 payment, and memory operations transparently:
 
-2. **Node operator model (V2, ERC-8001):** Agent builders run their own
-   Mnemonic nodes. They earn the majority of x402 agent spend. They pay
-   Mnemonic a protocol fee, settled via ERC-8001 on-chain. Mnemonic earns
-   passively at protocol layer. This is the Infura/Alchemy model for verifiable
-   agent memory — operators own the infrastructure; the protocol captures value
-   at scale.
+```python
+from mnemonic import AgentMemory
 
-**Why x402 specifically (vs. subscription or API key):**
+# Local-first (no network, no payment, commits to Arweave+Solana mainnet)
+mem = AgentMemory(wallet=keypair)
 
-Agents can discover and pay for x402 APIs autonomously — no human required to
-set up billing, create an account, or rotate keys. As multi-agent systems grow,
-the friction of human-mediated billing becomes a structural bottleneck. x402
-eliminates that bottleneck at the protocol level. For Mnemonic, whose value
-proposition is already "memory that belongs to the agent, not the platform,"
-x402-native payment is architecturally coherent: the agent owns its memory and
-pays for it directly.
+# Network mode: auto-discovers a node via on-chain registry
+mem = AgentMemory(wallet=keypair, network=True)
 
-**Chain choice:**
+# Pin to a specific operator node
+mem = AgentMemory(wallet=keypair, node="https://node.example.com")
 
-x402 tooling is most mature on Base (EVM, USDC). Mnemonic's commitment layer
-uses Solana. For V1 x402 integration, Base/USDC is recommended for the payment
-layer — it is independent of the commitment layer. Solana-native payment
-(SPL tokens) is a V2 option if the operator community prefers a single-chain
-stack.
+# All operations identical regardless of mode
+mem.remember("I met with source X. Claims internal audit was suppressed.")
+results = mem.recall("what do I know about the audit?")
+snapshot = mem.commit()    # anchors to Arweave + Solana mainnet, returns tx ids
+mem.verify(snapshot)       # recomputes hash, compares to on-chain — always free
+```
 
-**Integration point:**
+x402 is invisible to the agent developer. `AgentMemory` intercepts 402
+responses, pays from the configured wallet, and retries. The agent developer
+writes memory operations; the SDK handles economics.
 
-`mnemonic/serve.py` — x402 middleware is a decorator on each metered endpoint.
-CLI flag: `mnemonic serve --payment-required` (opt-in). Default mode remains
-free/local for the V1 demo and developer onboarding. x402 mode activates only
-when the operator has a payment wallet configured.
+**3. Node discovery: on-chain Solana registry.**
+
+Nodes register via a Solana program (PDA per operator):
+```
+operator_pubkey → { endpoint: URL, fee_schedule: {...}, uptime: F, region: str }
+```
+
+`AgentMemory(network=True)` queries the registry at startup, ranks nodes by
+latency + price, picks one. If a node goes down, failover to the next. The
+registry is the only bootstrapping dependency — and it is on Solana mainnet,
+not a Mnemonic-operated service.
+
+Bootstrap list of known operator endpoints is embedded in the SDK as a fallback
+for the discovery phase (same pattern as Bitcoin's DNS seeds).
+
+**4. Payment layer: USDC-SPL on Solana.**
+
+All x402 payments settle in USDC on Solana (SPL token). Reasons:
+- Stays on one chain — commitment layer and payment layer are both Solana
+- USDC-SPL is liquid and widely supported by agent frameworks
+- No cross-chain bridging required
+- ERC-8001 EVM agents can bridge USDC to Solana and use the same endpoints
+
+EVM-native agents (ERC-8001 registered) are supported via USDC bridge or
+by operating a dedicated Base-USDC x402 endpoint on the node. Node operators
+decide which payment tokens to accept.
+
+**5. Metering model.**
+
+| Endpoint | x402 price | Rationale |
+|----------|-----------|-----------|
+| `/api/search` | $0.001 USDC | ~1/5 of an embedding API call |
+| `/api/commit` (1k) | $0.05 USDC | Arweave raw ($0.04) + relay margin |
+| `/api/commit` (10k) | $0.45 USDC | Same margin |
+| `/api/switch-provider` | $0.10 USDC | Re-embed is compute-heavy |
+| `/api/verify` | **Free — protocol-level guarantee** | Auditability must not be paywalled |
+| `/api/stats` | **Free** | Discovery and transparency |
+
+These are *protocol-suggested* prices. Node operators set their own fees. The
+protocol enforces the free/metered boundary (verify and stats are always free)
+but not the dollar amount.
+
+At 100 searches/day: agent spends ~$3/month. A fleet of 100 agents: ~$300/month
+total across all operator nodes. No human billing interaction at any scale.
+
+**6. Protocol fee.**
+
+Node operators pay Mnemonic a protocol fee on each x402 transaction. Fee
+is collected via a Solana program — operators send a percentage to the
+protocol treasury PDA on each settled payment. Suggested fee: 10% of face
+value. This is Mnemonic's revenue model: protocol-layer passive income, no
+infrastructure ownership.
+
+**7. ERC-8001 / Solana identity convergence.**
+
+ERC-8001 on EVM and Mnemonic's Solana-native agent identity serve the same
+function: an on-chain commitment that an agent exists, has a spending limit, and
+can be tracked for contribution quality. The mapping:
+
+| ERC-8001 (EVM) | Mnemonic Solana equivalent |
+|----------------|---------------------------|
+| Agent registration | PDA: `[agent_pubkey, "mnemonic-agent"]` |
+| Spending commitment | Token allowance on USDC-SPL escrow |
+| Identity proof | Signed memo on Solana |
+| Cross-chain agents | Bridge USDC; use Solana pubkey as agent ID |
+
+This identity is the same pubkey used in ADR-018 reliability scoring — one
+registration covers both payment authorization and contribution quality tracking.
 
 **Relationship to other ADRs:**
-- ADR-006 (concurrent writers): Node operators are writers in a shared pool.
-  Their identity is an ERC-8001 on-chain registration.
-- ADR-018 (reliability oracle): ERC-8001 writer identity feeds directly into
-  per-writer reliability scoring. Same pubkey that pays via x402 also tracks
-  contribution quality on-chain.
-- DEMO_SPEC.md: Act 4 extended to show agent-side economics ("an agent running
-  100 searches/day spends $3/month autonomously — no invoices").
+- **ADR-006** (concurrent writers): Node operators are writer-pool hosts. Their
+  Solana pubkey is their identity in the shared pool.
+- **ADR-009** (security): x402 payment proof is a lightweight sybil resistance
+  mechanism — free-riding on the memory network requires paying per operation.
+- **ADR-018** (reliability oracle): The agent pubkey that pays via x402 is the
+  same pubkey tracked for contribution quality. One identity, two functions.
+- **DEMO_SPEC.md**: Act 4 updated to show agent economics and real mainnet txs.
 
 **Consequences:**
-- `mnemonic serve` architecture must accommodate optional x402 middleware from
-  the start; bolt-on later would require breaking API changes
-- `/api/verify` permanently free — this is a protocol-level commitment, not a
-  pricing decision; document it as such
-- ERC-8001 agent identity is added to the V2 multi-party writer model as the
-  on-chain identity primitive (supersedes ad-hoc Solana pubkey approach)
-- x402 metered mode is scoped to V1.1 (after V1 SDK ships); node operator model
-  is V2 scope
+- `AgentMemory` class is the primary V1 SDK surface (not the raw `MemoryStore`
+  / `MemoryIndexer` APIs, which remain available for advanced use)
+- Solana mainnet from day one — no devnet shortcut in production code paths
+- `mnemonic serve` must expose the node registry PDA write at operator startup
+- x402 middleware is built into `serve.py` from V1 (not bolted on later);
+  default mode is free/local, payment mode activates when operator wallet is set
+- `/api/verify` is permanently, unconditionally free — this is a protocol
+  invariant, not a pricing decision; any node operator that paywalls verify is
+  not running a valid Mnemonic node
+- Mnemonic organization runs zero production infrastructure — SDK + protocol
+  spec + on-chain registry program only
