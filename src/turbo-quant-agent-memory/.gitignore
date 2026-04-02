@@ -7,3 +7,4 @@ results.json
 node_modules/
 test-ledger/
 test-keypair.json
+.qwen/
