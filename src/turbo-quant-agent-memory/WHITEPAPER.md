@@ -526,11 +526,26 @@ This architecture is V1.1 scope. V1.0 SDK ships single-writer only.
 | MemGPT / Letta | ✓ | ✗ | ✗ | Partially | Optional |
 | IPFS + custom RAG | ✓ | Partially | ✗ | ✓ | Optional |
 | D-RAG (Lu et al., 2025) | ✓ | ✓ (reliability) | ✗ | ✓ | N/A |
+| V3DB (2026) | ✓ | ✓ (ZK retrieval) | ✗ | Partially | N/A |
+| Walrus + custom RAG | ✓ | ✓ (staking) | ✗ | ✓ | Optional |
 | **Mnemonic (this work)** | **✓** | **✓** | **✓** | **✓** | **✓** |
 
 TurboQuant (Zandieh & Mirrokni, 2025) provides the compression theory.
 Mnemonic provides the systems architecture that makes compressed memory
 verifiable, portable, and economically viable.
+
+**V3DB (2026):** The closest system to answering "trustless retrieval" — ZK
+proofs of ANN-retrieval correctness against a committed corpus snapshot,
+preserving embedding privacy. Where V3DB differs from Mnemonic: V3DB proves
+correctness of a single retrieval operation; Mnemonic proves integrity of the
+full memory state over time (session history, version chain). V3DB has no
+compression; Mnemonic has no retrieval correctness proof yet. V3DB-style
+proofs are a post-V2 research direction for Mnemonic (Section 9.2 Q3).
+
+**Walrus:** Decentralized storage protocol with staking/slashing economics.
+An alternative to Arweave for the persistence layer. Not evaluated for V1;
+Arweave's pay-once permanent storage model is simpler for the current use
+case. Worth revisiting at scale.
 
 **Closest related work — D-RAG (arXiv:2511.07577):** Lu et al. propose a
 decentralized RAG system where multiple independent nodes contribute documents,
@@ -569,7 +584,23 @@ mitigations (ADR-018).
 
 5. **No random rotation yet**: V1 uses calibrated scalar quantization without
    rotation. Random rotation (TurboQuant's core innovation) is a V2 upgrade
-   that may improve recall at extreme bit-widths.
+   that may improve recall at extreme bit-widths. Note: independent analysis
+   of the TurboQuant community (TURBOQUANT_DEEP_ANALYSIS.md) confirms the QJL
+   residual stage can hurt generation quality in KV-cache contexts due to
+   increased error variance after softmax — deferring it is the correct V1
+   decision.
+
+6. **Batch calibration vs. TurboQuant's online design**: TurboQuant is
+   data-oblivious and online — each vector is quantized independently with no
+   corpus. Mnemonic's `CalibratedScalarQuantizer` requires `fit()` on the full
+   corpus before quantization. Freezing calibration after bootstrap (ADR-006)
+   means new memories arriving after the freeze are quantized with an older
+   distribution. As corpus size and topic distribution drift, compressed-stage
+   recall degrades silently until the next compaction cycle. This is a
+   deliberate tradeoff: calibrated quantization achieves empirically higher
+   recall at our target bit-widths (4-bit, 8-bit) than data-oblivious schemes,
+   but it requires periodic recalibration to stay accurate. TurboQuant-style
+   random rotation (V2) eliminates this dependency entirely.
 
 ### 9.2 Open research questions
 
@@ -579,8 +610,14 @@ mitigations (ADR-018).
 2. Can **Matryoshka embeddings** (variable-dimension) reduce storage for
    low-importance memories without a separate model?
 
-3. Is there a practical **zero-knowledge proof** that a retrieval result came
-   from a committed memory blob without revealing the full blob?
+3. ~~Is there a practical **zero-knowledge proof** that a retrieval result came
+   from a committed memory blob without revealing the full blob?~~ **Partially
+   answered by V3DB (2026).** V3DB demonstrates audit-on-demand ZK proofs of
+   ANN-retrieval correctness (IVF-PQ index) against a committed corpus snapshot,
+   preserving embedding/index privacy. This is the current academic state of the
+   art for "trustless retrieval." Mnemonic's commitment scheme (SHA3 hash on
+   Solana) proves the blob is intact but not that the top-k result is correct.
+   Integrating V3DB-style retrieval proofs is a post-V2 research direction.
 
 4. ~~What is the right **open canonical embedder** for V1?~~ **Resolved (ADR-017).**
    `nomic-embed-text-v1.5` validated: final recall@10 = 1.000 at 1K–5K,
