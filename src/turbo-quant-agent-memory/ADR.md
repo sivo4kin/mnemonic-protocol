@@ -800,26 +800,41 @@ anchoring + Arweave upload) use Solana mainnet from V1. No devnet. No simulated
 transactions. The "$0.04 for 1000 memories. Permanent." claim must be backed
 by real mainnet transactions.
 
-**Mnemonic does not run infrastructure.** Self-hosting violates the protocol's
-decentralization thesis. All serving is done by node operators. Mnemonic
-provides the SDK and protocol specification only.
+**Infrastructure model: bootstrap nodes → independent operator network.**
+Mnemonic's long-term goal is a fully decentralized network of independent node
+operators. However, before that network exists, infrastructure must come from
+somewhere. Mnemonic operates **bootstrap nodes** during the network formation
+period — reference nodes that seed the network, prove the protocol works, and
+serve early SDK adopters. These nodes are explicitly temporary: labeled
+"Mnemonic bootstrap node," not marketed as a permanent hosted service, and
+decommissioned once the independent operator network reaches a defined
+threshold (target: 5+ independent operators running production nodes).
+
+This is the standard network bootstrap pattern (cf. Ethereum's early
+validator set, The Graph's initial indexers). It is not self-hosting as a
+business model — it is seeding the network.
 
 **Decision:**
 
-**1. Distribution model: node operators only.**
+**1. Distribution model: bootstrap nodes → operator network.**
 
 The SDK (`python -m mnemonic serve`) IS the node. Any agent builder or
-infrastructure operator can run a Mnemonic node. Mnemonic the organization
-does not run any node that agents depend on. Revenue to Mnemonic comes from
-the protocol fee, not from serving.
+infrastructure operator can run a Mnemonic node. Revenue to Mnemonic comes
+from the protocol fee, not from serving.
 
-Three deployment modes, all running the same `mnemonic serve` binary:
+Four deployment modes, all running the same `mnemonic serve` binary:
 
-| Mode | Who runs it | Storage | x402 enabled |
-|------|-------------|---------|--------------|
-| Local-embedded | The agent itself | Local disk + optional Arweave | No (free) |
-| Operator-hosted | Third-party operators | Arweave + Solana mainnet | Yes |
-| Self-hosted | Agent builder for their own fleet | Arweave + Solana mainnet | Optional |
+| Mode | Who runs it | Storage | x402 enabled | Lifespan |
+|------|-------------|---------|--------------|----------|
+| Bootstrap | Mnemonic (temporary) | Arweave + Solana mainnet | Yes | Until 5+ independent operators |
+| Operator-hosted | Third-party operators | Arweave + Solana mainnet | Yes | Permanent |
+| Self-hosted | Agent builder for own fleet | Arweave + Solana mainnet | Optional | Permanent |
+| Local-embedded | The agent itself | Local disk + optional Arweave | No (free) | Permanent |
+
+**Bootstrap sunset criteria:**
+- 5+ independent operators registered on-chain with ≥30-day uptime
+- Bootstrap nodes reduced to 0 — Mnemonic operates no production infrastructure
+- Timeline target: within 6 months of V1 SDK release
 
 **2. Seamless agent integration: `AgentMemory` SDK class.**
 
