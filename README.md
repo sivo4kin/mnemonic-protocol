@@ -1,4 +1,4 @@
-# turbo-quant-agent-memory
+# mnemonic-protocol
 
 Minimal runnable MVP prototype for a **TurboQuant-inspired agent memory system**.
 
@@ -52,7 +52,7 @@ Default model if not set:
 Embeddings are cached under:
 
 ```text
-src/turbo-quant-agent-memory/.cache/embeddings/
+src/.cache/embeddings/
 ```
 
 Cache key depends on:
@@ -65,13 +65,13 @@ Cache key depends on:
 Demo:
 
 ```bash
-python3 src/turbo-quant-agent-memory/pseudocode.py demo --embedder mock
+python3 src/pseudocode.py demo --embedder mock
 ```
 
 Benchmark:
 
 ```bash
-python3 src/turbo-quant-agent-memory/pseudocode.py benchmark --embedder mock --bits 8 --memories 1000 --queries 50 --k 10 --candidates 50
+python3 src/pseudocode.py benchmark --embedder mock --bits 8 --memories 1000 --queries 50 --k 10 --candidates 50
 ```
 
 ## Run with OpenAI embeddings
@@ -81,7 +81,7 @@ Demo:
 ```bash
 export OPENAI_API_KEY="your_api_key_here"
 export OPENAI_EMBEDDING_MODEL="text-embedding-3-small"
-python3 src/turbo-quant-agent-memory/pseudocode.py demo --embedder openai --bits 8
+python3 src/pseudocode.py demo --embedder openai --bits 8
 ```
 
 Benchmark:
@@ -89,7 +89,7 @@ Benchmark:
 ```bash
 export OPENAI_API_KEY="your_api_key_here"
 export OPENAI_EMBEDDING_MODEL="text-embedding-3-small"
-python3 src/turbo-quant-agent-memory/pseudocode.py benchmark --embedder openai --bits 8 --memories 200 --queries 20 --k 10 --candidates 50
+python3 src/pseudocode.py benchmark --embedder openai --bits 8 --memories 200 --queries 20 --k 10 --candidates 50
 ```
 
 ## Real dataset input (JSONL)
@@ -140,7 +140,7 @@ Example with OpenAI embeddings and JSON output:
 ```bash
 export OPENAI_API_KEY="your_api_key_here"
 export OPENAI_EMBEDDING_MODEL="text-embedding-3-small"
-python3 src/turbo-quant-agent-memory/pseudocode.py benchmark \
+python3 src/pseudocode.py benchmark \
   --embedder openai \
   --bits 8 \
   --memory-file ./memories.jsonl \

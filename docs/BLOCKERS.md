@@ -4,7 +4,7 @@
 
 **Status as of 2026-04-01: All V1 retrieval gates closed. V1 SDK development can begin.**
 
-`turbo-quant-agent-memory` has proven technical feasibility at scale with real production embeddings:
+`mnemonic-protocol` has proven technical feasibility at scale with real production embeddings:
 
 - ✅ Compressed retrieval with real OpenAI embeddings: 88.6% candidate recall@10, 94.2% final recall@10 at 10k memories
 - ✅ Exact reranking restores quality deterministically — round-trip all_identical at 1k and 10k
@@ -25,6 +25,7 @@ The remaining blockers are no longer “does the algorithm work?” They are pro
 > Technical feasibility is proven. The remaining risk is product execution.
 
 This document lists the blockers to resolve before V1 SDK release.
+For locked product and architecture decisions, treat `PROJECT_STATE.md` as the primary source of truth.
 
 ---
 
@@ -36,22 +37,18 @@ This document lists the blockers to resolve before V1 SDK release.
 A product cannot be implemented confidently until the team knows what is being built, for whom, and what problem it solves better than alternatives.
 
 #### What is not covered yet
-- first customer profile is not locked
-- first product shape is not locked
-- primary value proposition is not locked
-- it is unclear whether the first offering is:
-  - a personal encrypted memory vault
-  - a developer SDK/API
-  - a team/shared memory platform
-  - a crypto-native/verifiable memory layer
+- V2 direction is chosen (Personal Research Assistant, ADR-011), but first paying ICP is not validated
+- V1 is infrastructure-first (SDK/API), but packaging and GTM are not finalized
+- value proposition is defined at architecture level (verifiable, non-censored, portable memory) but pricing and buyer messaging are not yet validated
+- deployment model and commercial packaging remain open (hosted vs self-hosted expectations by segment)
 
 #### Open questions
 - Who is the first ideal customer profile (ICP)?
 - What painful problem do they already feel today?
 - What existing behavior/tool does this replace or improve?
 - What is the smallest sellable product?
-- Is v1 UI-first or API-first?
-- Is the initial wedge coding agents, research agents, crypto-native agents, or something else?
+- What is the exact V1 commercial package (SDK-only, managed API, or hybrid)?
+- Which initial wedge segment should be prioritized first (research, developer teams, or crypto-native agents)?
 
 #### Blocker status
 **High**
@@ -87,7 +84,7 @@ Without a clear first customer and buying motion, engineering effort may optimiz
 The system is memory infrastructure. If privacy claims are vague or incorrect, the product becomes untrustworthy immediately.
 
 #### What is not covered yet
-- formal threat model
+- formal threat model implementation plan
 - exact encryption boundaries
 - operator visibility
 - metadata leakage policy

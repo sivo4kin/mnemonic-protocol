@@ -294,7 +294,7 @@ Mitigation:
 - top-k return: `10`
 - shortlist size: `50`
 - embedding providers: **mock** (offline) and **OpenAI** (cached)
-- storage model: **in-memory only** (persistence not yet implemented)
+- storage model: **SQLite working index + snapshot/restore** (ADR-014 implemented)
 
 ---
 

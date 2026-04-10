@@ -178,7 +178,7 @@ Last updated: 2026-04-01
 **Date:** 2026-04-01
 **Status:** Accepted
 **Addresses gap:** #9
-**Research:** `research/turbo-quant-agent-memory/CONCURRENT_WRITERS.md`
+**Research:** `research/CONCURRENT_WRITERS.md`
 
 **Context:** What happens when multiple sessions write to the same agent's memory simultaneously? The current in-memory store has no concurrency controls. The on-chain commit pipeline (`commit.mjs`) uploads full snapshots with no parent reference — concurrent writers silently overwrite each other.
 
@@ -536,7 +536,7 @@ Saved file sizes: ~2.3–2.4 MB for 500 memories at 384 dimensions (float32 + qu
 
 ---
 
-### Source (`src/turbo-quant-agent-memory/`)
+### Source (`src/`)
 | File | Purpose |
 |------|---------|
 | `mnemonic/` | Modular Python package (models, embedders, quantizer, store, indexer, retriever, persistence, benchmark, CLI) |
@@ -552,7 +552,7 @@ Saved file sizes: ~2.3–2.4 MB for 500 memories at 384 dimensions (float32 + qu
 | `SCHEMA.md` | Data model for persistence |
 | `ADR.md` | This file |
 
-### On-chain (`src/turbo-quant-agent-memory/onchain/`)
+### On-chain (`src/onchain/`)
 | File | Purpose |
 |------|---------|
 | `commit.mjs` | SHA3-256 + Arweave upload + Solana memo (with encrypt/decrypt) |
@@ -560,7 +560,7 @@ Saved file sizes: ~2.3–2.4 MB for 500 memories at 384 dimensions (float32 + qu
 | `test-local.mjs` | 11 tests against local Solana validator |
 | `package.json` | Dependencies (@solana/web3.js) |
 
-### Research (`research/turbo-quant-agent-memory/`)
+### Research (`research/`)
 | File | Purpose |
 |------|---------|
 | `WHITEPAPER.md` | TurboQuant paper analysis |
@@ -723,7 +723,7 @@ nomic documentation, and local embedding cache. Updated CLI, benchmark harness, 
 
 **Date:** 2026-04-02
 **Status:** Accepted (design decision; implementation deferred to V1.1 / multi-party phase)
-**Research:** `research/turbo-quant-agent-memory/DRAG_ANALYSIS.md`, `src/turbo-quant-agent-memory/DRAG_ANALYSIS.md`
+**Research:** `research/DRAG_ANALYSIS.md`, `docs/DRAG_ANALYSIS.md`
 **Paper:** Lu et al., "A Decentralized Retrieval Augmented Generation System with Source Reliabilities Secured on Blockchain," arXiv:2511.07577
 
 **Context:**

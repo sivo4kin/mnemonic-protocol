@@ -385,7 +385,7 @@ TurboQuant uses a universal front-end (rotation + scalar quantization) and a spe
 
 ## 14. Where This Could Be Useful For Agent Memory / Quantized Systems
 
-Since you asked for a `turbo-quant-agent-memory` folder, here’s the connection I’d make.
+Since you asked for the `mnemonic-protocol` workspace, here’s the connection I’d make.
 
 If you’re thinking about **agent memory systems**, especially vector-heavy ones, the paper suggests a few architectural directions:
 

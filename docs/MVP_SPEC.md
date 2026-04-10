@@ -168,6 +168,7 @@ All experiments completed. V1 retrieval gates closed.
 | Recall@10 final after rerank (4-bit, 10k) | ≥ 0.85 | **0.942** | ✅ |
 | Index footprint (8-bit) | ≤ 30% | **25%** | ✅ |
 | Index footprint (4-bit) | ≤ 15% | **12.5%** | ✅ |
+| End-to-end retrieval latency (10k, single query) | < 50ms | Not yet validated as a closed gate; ADR-004 reports pure Python **58.6ms/query at 1k** and identifies numpy/Rust path for larger scale | ⚠️ Deferred |
 | Round-trip determinism | lossless | **all_identical=true** | ✅ |
 | Multi-domain recall@10 (4 domains, 10k) | ≥ 0.95 | **1.000** | ✅ |
 | Multi-domain purity@10 | ≥ 0.90 | **0.995** | ✅ |

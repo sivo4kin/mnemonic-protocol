@@ -27,7 +27,7 @@ If no → identify which link in the chain breaks and at what scale.
 ## Scope: what the MVP IS and IS NOT
 
 ### IS
-- A single Python script (~500 lines) that runs end-to-end
+- A runnable end-to-end prototype centered on the `mnemonic/` package and CLI
 - Uses a real open embedding model (nomic-embed-text or MiniLM)
 - Quantizes, serializes, uploads, downloads, deserializes, retrieves
 - Measures retrieval quality before and after the round-trip

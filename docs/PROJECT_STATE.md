@@ -2,7 +2,7 @@
 
 ## Project
 
-`turbo-quant-agent-memory`
+`mnemonic-protocol`
 
 ## One-line summary
 
@@ -52,8 +52,10 @@ All architecture, design, and validation work is done. SQLite persistence, multi
 
 The current project context was reconstructed from files created in a prior web chat session.
 Within this environment, the source of truth is:
-- `src/turbo-quant-agent-memory/*`
-- `research/turbo-quant-agent-memory/*`
+- `src/*`
+- `src/mnemonic/*`
+- `src/onchain/*`
+- `research/*`
 
 ## Project thesis
 
@@ -146,7 +148,7 @@ with a single `clip_alpha` have been corrected.
 
 ## Main artifacts
 
-### In `src/turbo-quant-agent-memory/`
+### In `src/`
 - `mnemonic/` — modular Python package (see below)
 - `pseudocode.py` — original monolith (superseded by `mnemonic/` package)
 - `agent_loop.py` — real agent integration loop
@@ -161,7 +163,7 @@ with a single `clip_alpha` have been corrected.
 - `BLOCKERS.md` — full blocker analysis (product + technical)
 - `DEMO_SPEC.md` — V1 live demo specification (5-act narrative, web UI, implementation plan)
 
-### In `src/turbo-quant-agent-memory/mnemonic/`
+### In `src/mnemonic/`
 - `__init__.py` — public API exports
 - `__main__.py` — CLI entry point (demo, benchmark, persist-test, multidomain, provider-switch)
 - `models.py` — MemoryItem, EmbeddingRecord, QuantizedRecord, SearchResult
@@ -175,13 +177,12 @@ with a single `clip_alpha` have been corrected.
 - `persistence.py` — load_jsonl, ingest_memory_jsonl, save_to_sqlite, load_from_sqlite, snapshot_items, restore_from_snapshot
 - `benchmark.py` — run_demo, run_benchmark, run_persist_test, run_multidomain_benchmark, run_provider_switch_test
 
-### In `src/turbo-quant-agent-memory/onchain/`
+### In `src/onchain/`
 - `commit.mjs` — encrypt + hash + Arweave upload + Solana memo commit
 - `encrypt.mjs` — AES-256-GCM encryption module (HKDF, packed format)
 - `test-local.mjs` — 11 tests against local Solana validator
 
-### In `research/turbo-quant-agent-memory/`
-- `WHITEPAPER.md` — TurboQuant paper analysis
+### In `research/`
 - `MVP_VERIFICATION.md` — verification methodology
 - `CONCURRENT_WRITERS.md` — concurrent writers research (ADR-006 basis)
 
@@ -242,7 +243,7 @@ with a single `clip_alpha` have been corrected.
 | 7 | Multi-party access | Single-owner keypair for V1 by design (ADR-003, ADR-009). Key wrapping path designed for V2. |
 | 8 | Concurrent writers | Architecture designed (ADR-006): event-sourced delta log, deferred to V1 SDK phase. |
 | 9 | Memory eviction | Pluggable policy design decided (ADR-007). Case-specific. Deferred. |
-| 10 | Modularization | Deferred — acceptable for prototype; do alongside SQLite persistence (gate 3). |
+| 10 | Modularization | Historical status before ADR-014/ADR-017 refactor; now closed by item #14 below. |
 | 11 | Docs/implementation sync | Resolved 2026-03-29. |
 | 12 | Platform change survivability | Resolved 2026-04-01 (ADR-012): snapshot/restore across different embedding spaces; recall retention 1.004 (8-bit), 1.008 (4-bit); content lossless. |
 | 13 | Canonical open embedder | Resolved 2026-04-01 (ADR-017): `nomic-embed-text-v1.5` (768-dim, Apache 2.0) validated — final recall@10 = 1.000 at 1K–5K, multi-domain purity = 1.000, persistence lossless. Adopted as V1 canonical embedder. |
