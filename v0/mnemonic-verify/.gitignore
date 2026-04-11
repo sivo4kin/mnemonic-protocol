@@ -1,0 +1,7 @@
+/target
+.env
+*.json
+!Cargo.toml
+!.env.example
+receipts/*.json
+payer.json
