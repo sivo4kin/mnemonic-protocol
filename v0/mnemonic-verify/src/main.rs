@@ -13,6 +13,15 @@ use mnemonic_verify::{
     verify,
 };
 
+/// Safely truncate a string to at most `n` characters, appending "..." if truncated.
+fn truncate(s: &str, n: usize) -> String {
+    if s.len() > n {
+        format!("{}...", &s[..n])
+    } else {
+        s.to_string()
+    }
+}
+
 #[derive(Parser)]
 #[command(name = "mnemonic-verify")]
 #[command(about = "Minimal verifiable memory round-trip (local nodes)")]
@@ -104,12 +113,12 @@ async fn cmd_write(text: &str) -> anyhow::Result<()> {
     // 3. Hash (excludes content_hash field)
     let content_hash = hash::hash_payload(&payload);
     payload.content_hash = content_hash.clone();
-    eprintln!("  Hashed    {}", &content_hash[..16]);
+    eprintln!("  Hashed    {}", truncate(&content_hash, 16));
 
     // 4. Serialize and write to Arweave
     let payload_json = serde_json::to_string(&payload)?;
     let arweave_tx_id = arweave.write(&payload_json).await?;
-    eprintln!("  Written   arweave_tx: {}", &arweave_tx_id[..20]);
+    eprintln!("  Written   arweave_tx: {}", truncate(&arweave_tx_id, 20));
 
     // 5. Mine block on arlocal
     arweave.mine().await?;
@@ -122,7 +131,7 @@ async fn cmd_write(text: &str) -> anyhow::Result<()> {
         timestamp_unix: now.timestamp(),
     };
     let solana_tx_sig = solana.write_anchor(&anchor).await?;
-    eprintln!("  Anchored  solana_tx: {}", &solana_tx_sig[..20]);
+    eprintln!("  Anchored  solana_tx: {}", truncate(&solana_tx_sig, 20));
 
     // 7. Save receipt
     let receipt = MemoryReceipt {
@@ -133,7 +142,8 @@ async fn cmd_write(text: &str) -> anyhow::Result<()> {
     };
     let dir = receipts_dir();
     std::fs::create_dir_all(&dir)?;
-    let receipt_path = dir.join(format!("{}.json", &solana_tx_sig[..16]));
+    let sig_prefix = if solana_tx_sig.len() >= 16 { &solana_tx_sig[..16] } else { &solana_tx_sig };
+    let receipt_path = dir.join(format!("{}.json", sig_prefix));
     std::fs::write(
         &receipt_path,
         serde_json::to_string_pretty(&receipt)?,
@@ -160,27 +170,21 @@ async fn cmd_recall(solana_tx_sig: &str) -> anyhow::Result<()> {
             let text_preview = result
                 .payload
                 .as_ref()
-                .map(|p| {
-                    if p.text.len() > 60 {
-                        format!("{}...", &p.text[..60])
-                    } else {
-                        p.text.clone()
-                    }
-                })
+                .map(|p| truncate(&p.text, 60))
                 .unwrap_or_else(|| "<deserialization failed>".into());
 
             println!("+-------------------------------------------------+");
             println!("|  STATUS:   VERIFIED                             |");
-            println!("|  Expected: {}...  |", &result.expected_hash[..32]);
-            println!("|  Actual:   {}...  |", &result.actual_hash[..32]);
-            println!("|  Text:     {:49} |", format!("\"{}\"", text_preview));
+            println!("|  Expected: {:35} |", truncate(&result.expected_hash, 32));
+            println!("|  Actual:   {:35} |", truncate(&result.actual_hash, 32));
+            println!("|  Text:     {:38} |", format!("\"{}\"", text_preview));
             println!("+-------------------------------------------------+");
         }
         VerificationStatus::Tampered => {
             println!("+-------------------------------------------------+");
             println!("|  STATUS:   TAMPERED                             |");
-            println!("|  Expected: {}...  |", &result.expected_hash[..32]);
-            println!("|  Actual:   {}...  |", &result.actual_hash[..32]);
+            println!("|  Expected: {:35} |", truncate(&result.expected_hash, 32));
+            println!("|  Actual:   {:35} |", truncate(&result.actual_hash, 32));
             println!("+-------------------------------------------------+");
         }
         VerificationStatus::AnchorNotFound => {
@@ -192,7 +196,7 @@ async fn cmd_recall(solana_tx_sig: &str) -> anyhow::Result<()> {
         VerificationStatus::ArweaveNotFound => {
             println!("+-------------------------------------------------+");
             println!("|  STATUS:   ARWEAVE NOT FOUND                    |");
-            println!("|  Arweave tx: {}  |", &result.arweave_tx_id[..32]);
+            println!("|  Arweave tx: {:35} |", truncate(&result.arweave_tx_id, 32));
             println!("+-------------------------------------------------+");
         }
     }
@@ -229,7 +233,7 @@ async fn cmd_tamper(solana_tx_sig: &str) -> anyhow::Result<()> {
     let corrupted_str = String::from_utf8_lossy(&corrupted).into_owned();
     let corrupted_tx_id = arweave.write(&corrupted_str).await?;
     arweave.mine().await?;
-    eprintln!("  Written corrupted data to arweave_tx: {}", &corrupted_tx_id[..20]);
+    eprintln!("  Written corrupted data to arweave_tx: {}", truncate(&corrupted_tx_id, 20));
 
     // 5. Create new anchor with ORIGINAL hash but CORRUPTED arweave tx
     let tampered_anchor = AnchorRecord {
@@ -238,7 +242,7 @@ async fn cmd_tamper(solana_tx_sig: &str) -> anyhow::Result<()> {
         timestamp_unix: Utc::now().timestamp(),
     };
     let tampered_sig = solana.write_anchor(&tampered_anchor).await?;
-    eprintln!("  Mismatched anchor written to Solana: {}", &tampered_sig[..20]);
+    eprintln!("  Mismatched anchor written to Solana: {}", truncate(&tampered_sig, 20));
 
     eprintln!(
         "\nRun: mnemonic-verify recall {}  to observe tamper detection",
