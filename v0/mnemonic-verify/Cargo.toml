@@ -12,6 +12,7 @@ tokio = { version = "1", features = ["full"] }
 
 # HTTP client (Arweave REST API)
 reqwest = { version = "0.12", features = ["json"] }
+arweave-rs = "0.2"
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
@@ -45,9 +46,6 @@ thiserror = "2"
 
 # Config
 dotenvy = "0.15"
-
-# Random (for arweave tx construction)
-rand = "0.8"
 
 # Base58 (for Solana instruction data decoding)
 bs58 = "0.5"

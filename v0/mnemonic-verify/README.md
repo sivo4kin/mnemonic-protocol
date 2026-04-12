@@ -26,7 +26,7 @@ sh -c "$(curl -sSfL https://release.solana.com/stable/install)"
 
 ```bash
 # Terminal 1: start local nodes
-bash scripts/start-local-nodes.sh
+bash scripts/lib/start-local-nodes.sh
 
 # Terminal 2: build and run
 cargo build
@@ -47,8 +47,14 @@ mnemonic-verify status                   Check local node connectivity
 ## Tests
 
 ```bash
-# Requires arlocal + solana-test-validator running
-cargo test
+# One command: reproduces README CLI flow (status/write/recall/tamper)
+bash scripts/verify-cli.sh
+
+# One command: starts local nodes if needed, runs integration tests
+bash scripts/run-tests.sh integration
+
+# One command: starts local nodes if needed, runs full test suite
+bash scripts/run-tests.sh all
 ```
 
 Tests gracefully skip if local nodes are not running.
@@ -60,7 +66,11 @@ Copy `.env.example` to `.env` and adjust if needed:
 ```
 ARWEAVE_URL=http://localhost:1984
 SOLANA_RPC_URL=http://localhost:8899
+ARWEAVE_JWK_PATH=keys/arlocal-test-wallet.jwk
 ```
+
+`ARWEAVE_JWK_PATH` must point to an Arweave JWK wallet file for signing writes.
+The bundled `keys/arlocal-test-wallet.jwk` is only for local testing with arlocal.
 
 ## Architecture
 

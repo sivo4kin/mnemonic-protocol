@@ -5,3 +5,4 @@
 !.env.example
 receipts/*.json
 payer.json
+logs

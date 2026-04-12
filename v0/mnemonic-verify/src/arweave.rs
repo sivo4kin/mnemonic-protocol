@@ -1,119 +1,130 @@
 use anyhow::Context;
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
-use rand::Rng;
-use sha2::{Digest, Sha256};
+use arweave_rs::{
+    crypto::base64::Base64,
+    transaction::tags::{FromUtf8Strs, Tag},
+    Arweave,
+};
+use reqwest::Url;
+use std::path::PathBuf;
 
 use crate::errors::MnemonicError;
 
 pub struct ArweaveClient {
     base_url: String,
+    jwk_path: PathBuf,
     client: reqwest::Client,
-}
-
-/// Arweave transaction structure for arlocal submissions.
-#[derive(serde::Serialize)]
-struct ArweaveTx {
-    format: u32,
-    id: String,
-    last_tx: String,
-    owner: String,
-    tags: Vec<ArweaveTag>,
-    target: String,
-    quantity: String,
-    data_size: String,
-    data: String,
-    data_root: String,
-    reward: String,
-    signature: String,
-}
-
-#[derive(serde::Serialize)]
-struct ArweaveTag {
-    name: String,
-    value: String,
 }
 
 impl ArweaveClient {
     pub fn new(base_url: &str) -> Self {
+        let jwk_path = std::env::var("ARWEAVE_JWK_PATH")
+            .unwrap_or_else(|_| "keys/arlocal-test-wallet.jwk".to_string());
         Self {
             base_url: base_url.trim_end_matches('/').to_string(),
+            jwk_path: PathBuf::from(jwk_path),
             client: reqwest::Client::new(),
         }
     }
 
     /// POST data to arlocal. Returns the Arweave transaction ID.
     ///
-    /// Constructs a minimal Arweave format-2 transaction with dummy
-    /// cryptographic fields (arlocal does not validate signatures).
+    /// Builds and signs a valid Arweave v2 transaction using a JWK wallet.
+    /// This is accepted by strict arlocal versions that reject dummy tx fields.
     pub async fn write(&self, payload_json: &str) -> anyhow::Result<String> {
         let data_bytes = payload_json.as_bytes();
-        let mut rng = rand::thread_rng();
+        let base_url = Url::parse(&self.base_url).context("invalid ARWEAVE_URL")?;
+        let arweave = Arweave::from_keypair_path(self.jwk_path.clone(), base_url)
+            .context("initializing arweave signer from ARWEAVE_JWK_PATH")?;
+        let wallet_address = arweave
+            .get_wallet_address()
+            .context("reading wallet address from JWK")?;
 
-        // Generate dummy signature (512 bytes) — arlocal doesn't validate
-        let sig_bytes: Vec<u8> = (0..512).map(|_| rng.gen()).collect();
-        let id_hash = Sha256::digest(&sig_bytes);
-        let id = URL_SAFE_NO_PAD.encode(id_hash);
-        let signature = URL_SAFE_NO_PAD.encode(&sig_bytes);
-
-        // Dummy owner (256 bytes)
-        let owner_bytes: Vec<u8> = (0..256).map(|_| rng.gen()).collect();
-        let owner = URL_SAFE_NO_PAD.encode(&owner_bytes);
-
-        // Data encoding
-        let data_b64 = URL_SAFE_NO_PAD.encode(data_bytes);
-        let data_root_hash = Sha256::digest(data_bytes);
-        let data_root = URL_SAFE_NO_PAD.encode(data_root_hash);
-
-        // Tags
         let tags = vec![
-            ArweaveTag {
-                name: URL_SAFE_NO_PAD.encode(b"Content-Type"),
-                value: URL_SAFE_NO_PAD.encode(b"application/json"),
-            },
-            ArweaveTag {
-                name: URL_SAFE_NO_PAD.encode(b"App-Name"),
-                value: URL_SAFE_NO_PAD.encode(b"mnemonic-verify"),
-            },
-            ArweaveTag {
-                name: URL_SAFE_NO_PAD.encode(b"Version"),
-                value: URL_SAFE_NO_PAD.encode(b"0.1.0"),
-            },
+            Tag::<Base64>::from_utf8_strs("Content-Type", "application/json")
+                .context("creating Content-Type tag")?,
+            Tag::<Base64>::from_utf8_strs("App-Name", "mnemonic-verify")
+                .context("creating App-Name tag")?,
+            Tag::<Base64>::from_utf8_strs("Version", "0.1.0")
+                .context("creating Version tag")?,
         ];
 
-        let tx = ArweaveTx {
-            format: 2,
-            id: id.clone(),
-            last_tx: String::new(),
-            owner,
-            tags,
-            target: String::new(),
-            quantity: "0".into(),
-            data_size: data_bytes.len().to_string(),
-            data: data_b64,
-            data_root,
-            reward: "0".into(),
-            signature,
-        };
-
-        let url = format!("{}/tx", self.base_url);
-        let resp = self
-            .client
-            .post(&url)
-            .json(&tx)
-            .send()
+        let tx = arweave
+            .create_transaction(Base64::empty(), tags, data_bytes.to_vec(), 0, 0, false)
             .await
-            .context("arweave POST /tx failed")?;
+            .context("creating arweave transaction")?;
+        let signed_tx = arweave
+            .sign_transaction(tx)
+            .context("signing arweave transaction")?;
 
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
+        let (status, body) = self.post_signed_tx(&signed_tx).await?;
+        if status.is_success() {
+            return Ok(signed_tx.id.to_string());
+        }
+
+        // arlocal can reject with 410 if the test wallet has no balance yet.
+        // Top up locally and retry once.
+        if status == reqwest::StatusCode::GONE
+            && body.contains("enough tokens")
+            && self.is_local_gateway()
+        {
+            self.mint_local_wallet(&wallet_address, "1000000000000000")
+                .await
+                .context("funding local arweave wallet")?;
+
+            let (retry_status, retry_body) = self.post_signed_tx(&signed_tx).await?;
+            if retry_status.is_success() {
+                return Ok(signed_tx.id.to_string());
+            }
+
             return Err(MnemonicError::ArweaveWrite(format!(
-                "HTTP {status}: {body}"
+                "HTTP {retry_status}: {retry_body}"
             ))
             .into());
         }
 
-        Ok(id)
+        Err(MnemonicError::ArweaveWrite(format!("HTTP {status}: {body}")).into())
+    }
+
+    async fn post_signed_tx(
+        &self,
+        signed_tx: &arweave_rs::transaction::Tx,
+    ) -> anyhow::Result<(reqwest::StatusCode, String)> {
+        let url = format!("{}/tx", self.base_url);
+        let resp = self
+            .client
+            .post(&url)
+            .json(signed_tx)
+            .send()
+            .await
+            .context("arweave POST /tx failed")?;
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        Ok((status, body))
+    }
+
+    async fn mint_local_wallet(&self, address: &str, balance: &str) -> anyhow::Result<()> {
+        let url = format!("{}/mint/{address}/{balance}", self.base_url);
+        let resp = self
+            .client
+            .get(&url)
+            .send()
+            .await
+            .context("arweave GET /mint/:address/:balance failed")?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(anyhow::anyhow!(
+                "arweave wallet fund HTTP {status}: {body}"
+            ));
+        }
+        Ok(())
+    }
+
+    fn is_local_gateway(&self) -> bool {
+        match Url::parse(&self.base_url) {
+            Ok(url) => matches!(url.host_str(), Some("localhost" | "127.0.0.1")),
+            Err(_) => false,
+        }
     }
 
     /// GET /<tx_id> from arlocal. Returns raw bytes of the stored content.
