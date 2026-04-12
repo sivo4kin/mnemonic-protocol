@@ -1,0 +1,6 @@
+[submodule "external/turboquant_gpu"]
+	path = external/turboquant_gpu
+	url = https://github.com/DevTechJr/turboquant-gpu
+[submodule "external/scos-labs-turboquant"]
+	path = external/scos-labs-turboquant
+	url = https://github.com/scos-lab/turboquant
