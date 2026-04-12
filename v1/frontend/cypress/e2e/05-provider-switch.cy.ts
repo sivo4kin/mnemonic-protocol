@@ -73,50 +73,79 @@ describe('Provider Switch', () => {
   })
 
   it('session and message history survives provider switch', () => {
-    // Create a session and add messages BEFORE switching
+    // 1. Create a session with openai
     cy.request('POST', `/api/v1/workspaces/${workspaceId}/sessions`, {
-      title: 'Pre-switch session',
+      title: 'Continuity session',
     }).then(sessRes => {
       const sessionId = sessRes.body.data.session_id
 
-      // Simulate user+assistant messages (insert directly, no LLM call)
-      cy.request('GET', `/api/v1/workspaces/${workspaceId}/sessions/${sessionId}/messages`)
+      // 2. Send a message BEFORE switch (this calls openai provider)
+      //    Will fail to call the actual LLM (no API key), but the user
+      //    message and error response are still persisted
+      cy.request('POST', `/api/v1/workspaces/${workspaceId}/sessions/${sessionId}/messages`, {
+        content: 'What is TurboQuant compression ratio?',
+        top_k_memories: 5,
+      }).then(askRes => {
+        // User message should be saved regardless of provider success
+        expect(askRes.body.ok).to.be.true
+        const preMessages = [
+          askRes.body.data.user_message,
+          askRes.body.data.assistant_message,
+        ]
+        expect(preMessages[0].role).to.eq('user')
+        expect(preMessages[0].content).to.eq('What is TurboQuant compression ratio?')
+        expect(preMessages[1].role).to.eq('assistant')
 
-      // Save some messages via the messages table directly
-      // We use the ask endpoint structure but we'll verify via list
-      // For this test, add messages by creating a second session too
-      cy.request('POST', `/api/v1/workspaces/${workspaceId}/sessions`, {
-        title: 'Second session',
-      }).then(() => {
-        // Verify 2 sessions exist before switch
-        cy.request('GET', `/api/v1/workspaces/${workspaceId}/sessions`).then(res => {
+        // 3. Verify messages exist pre-switch
+        cy.request('GET', `/api/v1/workspaces/${workspaceId}/sessions/${sessionId}/messages`).then(res => {
           expect(res.body.data.length).to.eq(2)
+          expect(res.body.data[0].content).to.eq('What is TurboQuant compression ratio?')
         })
 
-        // Switch provider
+        // 4. Switch provider: openai → anthropic
         cy.request('POST', `/api/v1/workspaces/${workspaceId}/provider-binding/switch`, {
-          provider: 'qwen',
-          model: 'qwen-plus',
+          provider: 'anthropic',
+          model: 'claude-sonnet-4-20250514',
+        }).then(switchRes => {
+          expect(switchRes.body.data.message).to.include('preserved')
         })
 
-        // Verify sessions still exist after switch
-        cy.request('GET', `/api/v1/workspaces/${workspaceId}/sessions`).then(res => {
+        // 5. Verify old messages still exist in the SAME session
+        cy.request('GET', `/api/v1/workspaces/${workspaceId}/sessions/${sessionId}/messages`).then(res => {
           expect(res.body.data.length).to.eq(2)
-          const titles = res.body.data.map((s: any) => s.title)
-          expect(titles).to.include('Pre-switch session')
-          expect(titles).to.include('Second session')
+          expect(res.body.data[0].role).to.eq('user')
+          expect(res.body.data[0].content).to.eq('What is TurboQuant compression ratio?')
         })
 
-        // Verify the specific session is still accessible
+        // 6. Send a NEW message to the SAME session with the NEW provider
+        cy.request('POST', `/api/v1/workspaces/${workspaceId}/sessions/${sessionId}/messages`, {
+          content: 'Follow-up: how does this compare to scalar quantization?',
+          top_k_memories: 5,
+        }).then(postSwitchRes => {
+          expect(postSwitchRes.body.ok).to.be.true
+          const postMsg = postSwitchRes.body.data.user_message
+          expect(postMsg.content).to.eq('Follow-up: how does this compare to scalar quantization?')
+
+          // The assistant response should record the NEW provider
+          const asstMsg = postSwitchRes.body.data.assistant_message
+          expect(asstMsg.provider_used).to.eq('anthropic')
+          expect(asstMsg.model_used).to.eq('claude-sonnet-4-20250514')
+        })
+
+        // 7. Verify full conversation history: 4 messages (2 pre + 2 post switch)
+        cy.request('GET', `/api/v1/workspaces/${workspaceId}/sessions/${sessionId}/messages`).then(res => {
+          expect(res.body.data.length).to.eq(4)
+          // First pair was with openai (or error), second pair with anthropic
+          expect(res.body.data[0].role).to.eq('user')
+          expect(res.body.data[2].role).to.eq('user')
+          expect(res.body.data[3].role).to.eq('assistant')
+          expect(res.body.data[3].provider_used).to.eq('anthropic')
+        })
+
+        // 8. Verify session is still active and usable
         cy.request('GET', `/api/v1/workspaces/${workspaceId}/sessions/${sessionId}`).then(res => {
-          expect(res.body.data.title).to.eq('Pre-switch session')
           expect(res.body.data.status).to.eq('active')
-        })
-
-        // Verify workspace stats still count everything
-        cy.request('GET', `/api/v1/workspaces/${workspaceId}/stats`).then(res => {
-          expect(res.body.data.session_count).to.eq(2)
-          expect(res.body.data.memory_count).to.eq(2) // pre-seeded memories
+          expect(res.body.data.title).to.eq('Continuity session')
         })
       })
     })
