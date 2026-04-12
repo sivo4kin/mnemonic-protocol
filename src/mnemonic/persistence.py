@@ -7,10 +7,10 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from .embedders import OpenAIEmbeddingProvider
-from .indexer import MemoryIndexer
+from .indexer import MemoryIndexer, Quantizer
 from .math_utils import normalize
 from .models import EmbeddingRecord, MemoryItem, QuantizedRecord
-from .quantizer import CalibratedScalarQuantizer
+from .quantizer import CalibratedScalarQuantizer, TurboQuantAdapter, _TURBOQUANT_AVAILABLE
 from .store import MemoryStore
 
 
@@ -92,13 +92,12 @@ CREATE TABLE IF NOT EXISTS quantizer_state (
 """
 
 
-def save_to_sqlite(store: MemoryStore, quantizer: CalibratedScalarQuantizer, path: Path) -> None:
+def save_to_sqlite(store: MemoryStore, quantizer: Quantizer, path: Path) -> None:
     """Persist the full memory store and quantizer state to a SQLite database.
 
-    Stores raw text, full-precision embeddings, quantized codes, and the
-    calibrated quantizer parameters (alphas + steps). A subsequent
-    load_from_sqlite call restores an identical in-memory state without
-    re-embedding anything.
+    Supports both CalibratedScalarQuantizer and TurboQuantAdapter. The quantizer
+    type is recorded in quantizer_state so load_from_sqlite restores the correct
+    backend.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(path))
@@ -127,26 +126,36 @@ def save_to_sqlite(store: MemoryStore, quantizer: CalibratedScalarQuantizer, pat
                 "INSERT OR REPLACE INTO quantized VALUES (?, ?, ?, ?, ?, ?)",
                 (qrec.memory_id, qrec.quant_bits, qrec.quant_scheme, qrec.packed_codes, qrec.embedding_dim, qrec.saturation_rate),
             )
-        if quantizer.is_fit():
-            assert quantizer.alphas is not None and quantizer.steps is not None
-            cur.execute(
-                "INSERT OR REPLACE INTO quantizer_state VALUES (1, ?, ?, ?)",
-                (quantizer.bits, _floats_to_blob(quantizer.alphas), _floats_to_blob(quantizer.steps)),
-            )
+        # Save quantizer state — format depends on backend type
+        if isinstance(quantizer, TurboQuantAdapter):
+            if quantizer.is_fit():
+                # Store TurboQuant params as JSON in the alphas blob
+                meta = json.dumps({"type": "turboquant", "dim": quantizer.dim, "seed": quantizer.seed}).encode()
+                cur.execute(
+                    "INSERT OR REPLACE INTO quantizer_state VALUES (1, ?, ?, ?)",
+                    (quantizer.bits, meta, b""),
+                )
+        elif isinstance(quantizer, CalibratedScalarQuantizer):
+            if quantizer.is_fit():
+                assert quantizer.alphas is not None and quantizer.steps is not None
+                cur.execute(
+                    "INSERT OR REPLACE INTO quantizer_state VALUES (1, ?, ?, ?)",
+                    (quantizer.bits, _floats_to_blob(quantizer.alphas), _floats_to_blob(quantizer.steps)),
+                )
         conn.commit()
     finally:
         conn.close()
 
 
-def load_from_sqlite(path: Path) -> Tuple[MemoryStore, CalibratedScalarQuantizer]:
-    """Restore a MemoryStore and CalibratedScalarQuantizer from a SQLite database.
+def load_from_sqlite(path: Path) -> Tuple[MemoryStore, Quantizer]:
+    """Restore a MemoryStore and quantizer from a SQLite database.
 
-    No re-embedding required — all embeddings and quantized codes are stored.
-    The restored state is identical to what was saved.
+    Auto-detects whether the stored quantizer is CalibratedScalar or TurboQuant
+    based on the quantizer_state contents.
     """
     conn = sqlite3.connect(str(path))
     store = MemoryStore()
-    quantizer: Optional[CalibratedScalarQuantizer] = None
+    quantizer: Optional[Quantizer] = None
     try:
         for row in conn.execute("SELECT memory_id, content, memory_type, importance_score, tags FROM memory_items"):
             store.put_item(MemoryItem(row[0], row[1], row[2], row[3], json.loads(row[4])))
@@ -166,10 +175,23 @@ def load_from_sqlite(path: Path) -> Tuple[MemoryStore, CalibratedScalarQuantizer
             ))
         row = conn.execute("SELECT bits, alphas, steps FROM quantizer_state WHERE id=1").fetchone()
         if row:
-            q = CalibratedScalarQuantizer(bits=row[0])
-            q.alphas = _blob_to_floats(row[1])
-            q.steps = _blob_to_floats(row[2])
-            quantizer = q
+            bits = row[0]
+            alphas_blob = bytes(row[1])
+            steps_blob = bytes(row[2])
+            # Detect TurboQuant: alphas blob is JSON with {"type": "turboquant"}
+            try:
+                meta = json.loads(alphas_blob.decode())
+                if meta.get("type") == "turboquant" and _TURBOQUANT_AVAILABLE:
+                    q = TurboQuantAdapter(bits=bits, dim=meta["dim"], seed=meta.get("seed", 42))
+                    q._ready = True
+                    quantizer = q
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                pass
+            if quantizer is None and alphas_blob and steps_blob:
+                q = CalibratedScalarQuantizer(bits=bits)
+                q.alphas = _blob_to_floats(alphas_blob)
+                q.steps = _blob_to_floats(steps_blob)
+                quantizer = q
     finally:
         conn.close()
     if quantizer is None:

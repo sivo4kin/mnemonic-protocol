@@ -6,12 +6,13 @@ from typing import List, Tuple
 from .embedders import BaseEmbeddingProvider
 from .math_utils import dot, normalize
 from .models import SearchResult
-from .quantizer import CalibratedScalarQuantizer
+from .quantizer import CalibratedScalarQuantizer, TurboQuantAdapter
+from .indexer import Quantizer
 from .store import MemoryStore
 
 
 class MemoryRetriever:
-    def __init__(self, store: MemoryStore, embedder: BaseEmbeddingProvider, quantizer: CalibratedScalarQuantizer):
+    def __init__(self, store: MemoryStore, embedder: BaseEmbeddingProvider, quantizer: Quantizer):
         self.store = store
         self.embedder = embedder
         self.quantizer = quantizer

@@ -2,7 +2,7 @@ from .models import MemoryItem, EmbeddingRecord, QuantizedRecord, SearchResult
 from .math_utils import dot, l2_norm, normalize, clip
 from .cache import EmbeddingCache
 from .embedders import BaseEmbeddingProvider, MockEmbeddingProvider, OpenAIEmbeddingProvider, NomicEmbeddingProvider, build_embedder, _has_embed_batch
-from .quantizer import CalibratedScalarQuantizer
+from .quantizer import CalibratedScalarQuantizer, TurboQuantAdapter, _TURBOQUANT_AVAILABLE
 from .store import MemoryStore
 from .indexer import MemoryIndexer
 from .retriever import MemoryRetriever

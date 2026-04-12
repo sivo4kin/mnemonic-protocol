@@ -1,16 +1,19 @@
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import List, Optional, Union
 
 from .embedders import BaseEmbeddingProvider
 from .math_utils import normalize
 from .models import EmbeddingRecord, MemoryItem, QuantizedRecord
-from .quantizer import CalibratedScalarQuantizer
+from .quantizer import CalibratedScalarQuantizer, TurboQuantAdapter
 from .store import MemoryStore
+
+# Accept either quantizer backend
+Quantizer = Union[CalibratedScalarQuantizer, TurboQuantAdapter]
 
 
 class MemoryIndexer:
-    def __init__(self, store: MemoryStore, embedder: BaseEmbeddingProvider, quantizer: CalibratedScalarQuantizer):
+    def __init__(self, store: MemoryStore, embedder: BaseEmbeddingProvider, quantizer: Quantizer):
         self.store = store
         self.embedder = embedder
         self.quantizer = quantizer
@@ -46,6 +49,10 @@ class MemoryIndexer:
         normalized_vectors = [self.store.embeddings[mid].normalized_f32 for mid in ids]
         self.quantizer.fit(normalized_vectors)
         self.store.quantized = {}
+        scheme = (
+            "turboquant" if isinstance(self.quantizer, TurboQuantAdapter)
+            else "symmetric_uniform_per_dim_calibrated"
+        )
         for memory_id in ids:
             emb = self.store.embeddings[memory_id]
             packed_codes, saturation_rate = self.quantizer.quantize_vector(emb.normalized_f32)
@@ -53,7 +60,7 @@ class MemoryIndexer:
                 QuantizedRecord(
                     memory_id=memory_id,
                     quant_bits=self.quantizer.bits,
-                    quant_scheme="symmetric_uniform_per_dim_calibrated",
+                    quant_scheme=scheme,
                     packed_codes=packed_codes,
                     embedding_dim=emb.embedding_dim,
                     saturation_rate=saturation_rate,

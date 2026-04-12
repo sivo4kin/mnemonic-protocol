@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from .embedders import BaseEmbeddingProvider, MockEmbeddingProvider, OpenAIEmbeddingProvider, build_embedder, _has_embed_batch
-from .indexer import MemoryIndexer
+from .indexer import MemoryIndexer, Quantizer
 from .math_utils import normalize
 from .models import EmbeddingRecord, MemoryItem, SearchResult
 from .persistence import (
@@ -18,17 +18,32 @@ from .persistence import (
     load_from_sqlite,
     snapshot_items,
 )
-from .quantizer import CalibratedScalarQuantizer
+from .quantizer import CalibratedScalarQuantizer, TurboQuantAdapter, _TURBOQUANT_AVAILABLE
 from .retriever import MemoryRetriever
 from .store import MemoryStore
 
 
-def build_system(bits: int = 8, embedder_name: str = "mock", dim: int = 384):
+def build_system(bits: int = 8, embedder_name: str = "mock", dim: int = 384, quantizer_name: str = "auto"):
+    """Build the full memory system.
+
+    quantizer_name: "scalar" for legacy CalibratedScalarQuantizer,
+                    "turboquant" for TurboQuantAdapter,
+                    "auto" (default) uses turboquant if available, else scalar.
+    """
     root = Path(__file__).resolve().parent.parent
     cache_dir = root / ".cache" / "embeddings"
     store = MemoryStore()
     embedder = build_embedder(embedder_name, cache_dir=cache_dir, dim=dim)
-    quantizer = CalibratedScalarQuantizer(bits=bits)
+
+    use_turbo = (
+        (quantizer_name == "turboquant") or
+        (quantizer_name == "auto" and _TURBOQUANT_AVAILABLE)
+    )
+    if use_turbo:
+        quantizer: Quantizer = TurboQuantAdapter(bits=max(bits, 2), dim=dim)
+    else:
+        quantizer = CalibratedScalarQuantizer(bits=bits)
+
     indexer = MemoryIndexer(store, embedder, quantizer)
     retriever = MemoryRetriever(store, embedder, quantizer)
     return store, embedder, quantizer, indexer, retriever
