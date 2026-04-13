@@ -22,6 +22,33 @@ CREATE TABLE IF NOT EXISTS attestation_embeddings (
     FOREIGN KEY (attestation_id) REFERENCES attestations(attestation_id)
 );
 CREATE INDEX IF NOT EXISTS idx_attestations_signer ON attestations(signer_pubkey);
+
+-- Payment: API keys with pre-funded balance (for Cursor / human MCP clients)
+CREATE TABLE IF NOT EXISTS api_keys (
+    api_key TEXT PRIMARY KEY,
+    owner_pubkey TEXT NOT NULL DEFAULT '',
+    balance_micro_usdc INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    last_used_at TEXT
+);
+
+-- Payment: audit trail for deposits and charges
+CREATE TABLE IF NOT EXISTS payment_events (
+    event_id TEXT PRIMARY KEY,
+    api_key TEXT NOT NULL,
+    amount_micro_usdc INTEGER NOT NULL,
+    event_type TEXT NOT NULL,  -- 'deposit' | 'charge' | 'refund'
+    tx_sig TEXT,               -- Solana tx sig (deposits only)
+    description TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_payment_events_key ON payment_events(api_key);
+
+-- Payment: x402 nonce deduplication (prevents replay attacks)
+CREATE TABLE IF NOT EXISTS x402_nonces (
+    tx_sig TEXT PRIMARY KEY,
+    used_at TEXT NOT NULL
+);
 "#;
 
 pub struct AttestationStore {
@@ -69,6 +96,92 @@ impl AttestationStore {
             params![attestation_id, embedding.len() as i32, emb_bytes],
         )?;
         Ok(())
+    }
+
+    // ── API key / balance management ────────────────────────────────────────
+
+    /// Create a new API key with zero balance. Returns the key.
+    pub fn create_api_key(&self, owner_pubkey: &str) -> anyhow::Result<String> {
+        let key = format!("mnm_{}", hex::encode(random_bytes::<24>()));
+        let now = chrono::Utc::now().to_rfc3339();
+        self.conn.execute(
+            "INSERT INTO api_keys (api_key, owner_pubkey, balance_micro_usdc, created_at) VALUES (?,?,0,?)",
+            params![key, owner_pubkey, now],
+        )?;
+        Ok(key)
+    }
+
+    /// Get balance in micro-USDC for an API key. Returns None if key not found.
+    pub fn get_balance(&self, api_key: &str) -> anyhow::Result<Option<i64>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT balance_micro_usdc FROM api_keys WHERE api_key = ?"
+        )?;
+        let mut rows = stmt.query(params![api_key])?;
+        Ok(rows.next()?.map(|r| r.get(0)).transpose()?)
+    }
+
+    /// Deduct `amount` from balance. Returns Err if insufficient funds or key not found.
+    pub fn deduct_balance(&self, api_key: &str, amount: i64, description: &str) -> anyhow::Result<()> {
+        let balance = self.get_balance(api_key)?
+            .ok_or_else(|| anyhow::anyhow!("api key not found"))?;
+        if balance < amount {
+            anyhow::bail!("insufficient balance: have {balance} micro-USDC, need {amount}");
+        }
+        let now = chrono::Utc::now().to_rfc3339();
+        self.conn.execute(
+            "UPDATE api_keys SET balance_micro_usdc = balance_micro_usdc - ?, last_used_at = ? WHERE api_key = ?",
+            params![amount, now, api_key],
+        )?;
+        self.conn.execute(
+            "INSERT INTO payment_events (event_id, api_key, amount_micro_usdc, event_type, description, created_at) VALUES (?,?,?,'charge',?,?)",
+            params![uuid::Uuid::new_v4().to_string(), api_key, amount, description, now],
+        )?;
+        Ok(())
+    }
+
+    /// Credit a deposit. Returns new balance.
+    pub fn credit_deposit(&self, api_key: &str, amount: i64, tx_sig: &str) -> anyhow::Result<i64> {
+        let now = chrono::Utc::now().to_rfc3339();
+        // Idempotent: skip if tx_sig already recorded
+        let existing: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM payment_events WHERE tx_sig = ?",
+            params![tx_sig], |r| r.get(0),
+        )?;
+        if existing > 0 {
+            anyhow::bail!("deposit tx already applied: {tx_sig}");
+        }
+        self.conn.execute(
+            "UPDATE api_keys SET balance_micro_usdc = balance_micro_usdc + ? WHERE api_key = ?",
+            params![amount, api_key],
+        )?;
+        if self.conn.changes() == 0 {
+            anyhow::bail!("api key not found: {api_key}");
+        }
+        self.conn.execute(
+            "INSERT INTO payment_events (event_id, api_key, amount_micro_usdc, event_type, tx_sig, description, created_at) VALUES (?,?,?,'deposit',?,?,?)",
+            params![uuid::Uuid::new_v4().to_string(), api_key, amount, tx_sig, "USDC deposit", now],
+        )?;
+        let new_balance: i64 = self.conn.query_row(
+            "SELECT balance_micro_usdc FROM api_keys WHERE api_key = ?",
+            params![api_key], |r| r.get(0),
+        )?;
+        Ok(new_balance)
+    }
+
+    /// Record an x402 tx sig as used (prevents replay). Returns Err if already used.
+    pub fn mark_x402_nonce(&self, tx_sig: &str) -> anyhow::Result<()> {
+        let now = chrono::Utc::now().to_rfc3339();
+        let result = self.conn.execute(
+            "INSERT INTO x402_nonces (tx_sig, used_at) VALUES (?,?)",
+            params![tx_sig, now],
+        );
+        match result {
+            Ok(_) => Ok(()),
+            Err(rusqlite::Error::SqliteFailure(e, _)) if e.code == rusqlite::ErrorCode::ConstraintViolation => {
+                anyhow::bail!("x402 payment already used: {tx_sig}")
+            }
+            Err(e) => Err(e.into()),
+        }
     }
 
     pub fn count(&self, signer: &str) -> anyhow::Result<i64> {
@@ -141,6 +254,24 @@ pub struct SearchResult {
     pub arweave_tx: String,
     pub created_at: String,
     pub relevance_score: f32,
+}
+
+fn random_bytes<const N: usize>() -> [u8; N] {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let t = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos() as u64;
+    let pid = std::process::id() as u64;
+    let cnt = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let mut state = t
+        ^ pid.wrapping_mul(0x9e3779b97f4a7c15)
+        ^ cnt.wrapping_mul(0x6c62272e07bb0142);
+    let mut out = [0u8; N];
+    for byte in out.iter_mut() {
+        state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        *byte = (state >> 33) as u8;
+    }
+    out
 }
 
 fn floats_to_bytes(v: &[f32]) -> Vec<u8> {

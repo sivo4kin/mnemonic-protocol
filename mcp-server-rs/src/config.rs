@@ -15,6 +15,16 @@ pub struct Config {
     pub openai_embed_model: String,
     /// TurboQuant bit width for compression (2, 3, or 4)
     pub turbo_bits: usize,
+
+    // ── Payment ──────────────────────────────────────────────────────────────
+    /// Payment mode: "none" | "balance" | "x402" | "both"
+    pub payment_mode: String,
+    /// Solana pubkey that receives USDC payments
+    pub treasury_pubkey: String,
+    /// USDC SPL mint address (mainnet: EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v)
+    pub usdc_mint: String,
+    /// Cost of mnemonic_sign_memory in micro-USDC (1 USDC = 1_000_000)
+    pub sign_memory_cost_micro_usdc: i64,
 }
 
 impl Config {
@@ -38,6 +48,11 @@ impl Config {
             openai_api_key: env_or("OPENAI_API_KEY", ""),
             openai_embed_model: env_or("OPENAI_EMBED_MODEL", "text-embedding-3-small"),
             turbo_bits: env_or("TURBO_BITS", "4").parse().unwrap_or(4),
+            payment_mode: env_or("PAYMENT_MODE", "none"),
+            treasury_pubkey: env_or("TREASURY_PUBKEY", ""),
+            usdc_mint: env_or("USDC_MINT", "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"),
+            sign_memory_cost_micro_usdc: env_or("SIGN_MEMORY_COST_MICRO_USDC", "1000")
+                .parse().unwrap_or(1000),
         }
     }
 }

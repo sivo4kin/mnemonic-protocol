@@ -43,6 +43,13 @@ pub struct McpState {
     pub store: std::sync::Mutex<AttestationStore>,
     pub embedder: Box<dyn Embedder>,
     pub compressor: EmbeddingCompressor,
+
+    // Payment config
+    /// "none" | "balance" | "x402" | "both"
+    pub payment_mode: String,
+    pub treasury_pubkey: String,
+    pub usdc_mint: String,
+    pub sign_memory_cost_micro_usdc: i64,
 }
 
 // Safety: We only access store through std::sync::Mutex (short critical sections, no await)
