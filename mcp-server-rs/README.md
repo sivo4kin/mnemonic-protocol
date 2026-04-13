@@ -74,6 +74,10 @@ bash scripts/test-http.sh 3000
 
 # Full test suite
 bash scripts/run-tests.sh
+
+# Benchmark tests
+cargo bench --bench decompress
+cargo bench --bench decompress -- "embedding_decompress/4bit/384"
 ```
 
 ## Architecture
