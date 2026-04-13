@@ -65,7 +65,7 @@ tokio-stream = "0.1"
 futures = "0.3"
 
 # TurboQuant compression (PolarQuant + QJL)
-turboquant = { git = "https://github.com/sivo4kin/turboquant-rs.git", branch = "claude/turboquant-rust-port-aNuIY" }
+turboquant = { git = "https://github.com/sivo4kin/turboquant-rs.git", branch = "master" }
 ndarray = "0.16"
 
 [dev-dependencies]

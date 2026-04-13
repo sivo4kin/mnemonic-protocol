@@ -8,7 +8,7 @@ pub fn load_or_create_keypair(path: &Path) -> anyhow::Result<Keypair> {
     if path.exists() {
         let data = std::fs::read_to_string(path).context("reading keypair file")?;
         let bytes: Vec<u8> = serde_json::from_str(&data).context("parsing keypair JSON")?;
-        Keypair::from_bytes(&bytes).map_err(|e| anyhow::anyhow!("invalid keypair: {e}"))
+        Keypair::try_from(bytes.as_slice()).map_err(|e| anyhow::anyhow!("invalid keypair: {e}"))
     } else {
         let kp = Keypair::new();
         if let Some(parent) = path.parent() {

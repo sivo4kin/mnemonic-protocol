@@ -6918,7 +6918,7 @@ dependencies = [
 [[package]]
 name = "turboquant"
 version = "0.1.0"
-source = "git+https://github.com/sivo4kin/turboquant-rs.git?branch=claude%2Fturboquant-rust-port-aNuIY#34ade7d66574b1526d7226d30495f463a7053757"
+source = "git+https://github.com/sivo4kin/turboquant-rs.git?branch=master#09a241e21a0a31eed5e8bcb115598c9e10f9bf84"
 dependencies = [
  "ndarray",
  "rand 0.8.5",

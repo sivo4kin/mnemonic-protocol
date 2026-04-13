@@ -1,7 +1,7 @@
 //! Implementation of the 5 Mnemonic MCP tools.
 
 use sha2::{Sha256, Digest};
-use solana_sdk::signature::{Keypair, Signer};
+use solana_sdk::signature::Keypair;
 
 use crate::{
     arweave::ArweaveClient,
