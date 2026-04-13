@@ -3,7 +3,14 @@
 use sha2::{Sha256, Digest};
 use solana_sdk::signature::{Keypair, Signer};
 
-use crate::{arweave::ArweaveClient, db::AttestationStore, embed, identity, solana::SolanaClient};
+use crate::{
+    arweave::ArweaveClient,
+    compress::EmbeddingCompressor,
+    db::AttestationStore,
+    embed::Embedder,
+    identity,
+    solana::SolanaClient,
+};
 
 /// Tool 1: whoami (sync — DB only)
 pub fn whoami(keypair: &Keypair, store: &AttestationStore) -> serde_json::Value {
@@ -17,12 +24,14 @@ pub fn whoami(keypair: &Keypair, store: &AttestationStore) -> serde_json::Value 
     })
 }
 
-/// Tool 2: sign_memory (async — network + DB)
+/// Tool 2: sign_memory (async — embed → compress → arweave → solana → DB)
 pub async fn sign_memory(
     keypair: &Keypair,
     solana: &SolanaClient,
     arweave: &ArweaveClient,
     store: &std::sync::Mutex<AttestationStore>,
+    embedder: &dyn Embedder,
+    compressor: &EmbeddingCompressor,
     content: &str,
     tags: &[String],
 ) -> anyhow::Result<serde_json::Value> {
@@ -30,22 +39,39 @@ pub async fn sign_memory(
     let attestation_id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().to_rfc3339();
 
-    let embedding = embed::embed_text(content);
+    // 1. Embed content
+    let embedding = embedder.embed(content);
+
+    // 2. Compress with TurboQuant
+    let compressed = compressor.compress(&embedding);
+    let compressed_bytes = compressed.to_bytes();
+
+    // 3. SHA-256 of content
     let content_hash = hex::encode(Sha256::digest(content.as_bytes()));
 
-    // Network: Arweave write
+    // 4. Write to Arweave (includes compressed embedding for future index reconstruction)
     let payload = serde_json::json!({
-        "content": content, "content_hash": content_hash,
-        "tags": tags, "signer": pubkey, "timestamp": now,
+        "content": content,
+        "content_hash": content_hash,
+        "tags": tags,
+        "signer": pubkey,
+        "timestamp": now,
+        "embedding_compressed": base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            &compressed_bytes,
+        ),
+        "embed_provider": embedder.provider_name(),
+        "embed_dim": embedder.dim(),
+        "turbo_bits": compressed.bit_width,
     });
     let arweave_tx = arweave.write(&payload.to_string()).await?;
     arweave.mine().await?;
 
-    // Network: Solana memo
+    // 5. Anchor on Solana
     let memo = serde_json::json!({"h": content_hash, "a": arweave_tx, "v": 1});
     let solana_tx = solana.write_memo(keypair, &memo.to_string()).await?;
 
-    // DB: save locally (short lock, no await)
+    // 6. Save locally (full embedding for search, compressed for storage reference)
     {
         let store = store.lock().unwrap();
         store.save_attestation(
@@ -54,6 +80,7 @@ pub async fn sign_memory(
         )?;
     }
 
+    let ratio = compressor.compression_ratio();
     Ok(serde_json::json!({
         "attestation_id": attestation_id,
         "content_hash": content_hash,
@@ -62,6 +89,15 @@ pub async fn sign_memory(
         "signer": pubkey,
         "did_sol": identity::did_sol(keypair),
         "timestamp": now,
+        "embed_provider": embedder.provider_name(),
+        "embed_dim": embedder.dim(),
+        "compression": {
+            "algorithm": "TurboQuant",
+            "bits": compressed.bit_width,
+            "ratio": format!("{ratio:.1}x"),
+            "original_bytes": embedding.len() * 4,
+            "compressed_bytes": compressed_bytes.len(),
+        },
     }))
 }
 
@@ -108,6 +144,7 @@ pub async fn verify(
                 "solana_tx": solana_tx.unwrap_or(""), "arweave_tx": ar_tx_id,
                 "signer": payload["signer"].as_str().unwrap_or(""),
                 "content_preview": &content[..content.len().min(200)],
+                "has_compressed_embedding": payload.get("embedding_compressed").is_some(),
             }));
         }
         return Ok(serde_json::json!({
@@ -130,11 +167,22 @@ pub fn prove_identity(keypair: &Keypair, challenge: &str) -> serde_json::Value {
     })
 }
 
-/// Tool 5: recall (sync — DB only)
-pub fn recall(keypair: &Keypair, store: &AttestationStore, query: &str, limit: usize) -> serde_json::Value {
+/// Tool 5: recall (sync — DB search using full embeddings)
+pub fn recall(
+    keypair: &Keypair,
+    store: &AttestationStore,
+    embedder: &dyn Embedder,
+    query: &str,
+    limit: usize,
+) -> serde_json::Value {
     let pubkey = identity::pubkey_base58(keypair);
-    let query_emb = embed::embed_text(query);
+    let query_emb = embedder.embed(query);
     let results = store.search(&query_emb, &pubkey, limit).unwrap_or_default();
     let total = store.count(&pubkey).unwrap_or(0);
-    serde_json::json!({"query": query, "results": results, "total_attestations": total})
+    serde_json::json!({
+        "query": query,
+        "results": results,
+        "total_attestations": total,
+        "embed_provider": embedder.provider_name(),
+    })
 }

@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use solana_sdk::signature::Keypair;
 
-use crate::{arweave::ArweaveClient, db::AttestationStore, solana::SolanaClient, tools};
+use crate::{arweave::ArweaveClient, compress::EmbeddingCompressor, db::AttestationStore, embed::Embedder, solana::SolanaClient, tools};
 
 /// JSON-RPC 2.0 request.
 #[derive(Debug, Deserialize)]
@@ -41,6 +41,8 @@ pub struct McpState {
     pub solana: SolanaClient,
     pub arweave: ArweaveClient,
     pub store: std::sync::Mutex<AttestationStore>,
+    pub embedder: Box<dyn Embedder>,
+    pub compressor: EmbeddingCompressor,
 }
 
 // Safety: We only access store through std::sync::Mutex (short critical sections, no await)
@@ -146,7 +148,7 @@ async fn handle_tool_call(name: &str, args: &Value, state: &McpState) -> Result<
                 .map(|a| a.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
                 .unwrap_or_default();
             // This tool does network I/O then DB — handled inside tools::sign_memory
-            tools::sign_memory(&state.keypair, &state.solana, &state.arweave, &state.store, &content, &tags)
+            tools::sign_memory(&state.keypair, &state.solana, &state.arweave, &state.store, state.embedder.as_ref(), &state.compressor, &content, &tags)
                 .await.map_err(|e| e.to_string())?
         }
         "mnemonic_verify" => {
@@ -165,7 +167,7 @@ async fn handle_tool_call(name: &str, args: &Value, state: &McpState) -> Result<
             let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(5) as usize;
             // DB-only: lock, query, release
             let store = state.store.lock().unwrap();
-            tools::recall(&state.keypair, &store, query, limit)
+            tools::recall(&state.keypair, &store, state.embedder.as_ref(), query, limit)
         }
         _ => return Err(format!("unknown tool: {name}")),
     };

@@ -9,6 +9,12 @@ pub struct Config {
     pub arweave_url: String,
     pub keypair_path: PathBuf,
     pub database_path: PathBuf,
+    /// "hash" (default, offline) or "openai" (requires OPENAI_API_KEY)
+    pub embed_provider: String,
+    pub openai_api_key: String,
+    pub openai_embed_model: String,
+    /// TurboQuant bit width for compression (2, 3, or 4)
+    pub turbo_bits: usize,
 }
 
 impl Config {
@@ -28,6 +34,10 @@ impl Config {
                 "DATABASE_PATH",
                 &format!("{}/.mnemonic/attestations.db", home),
             )),
+            embed_provider: env_or("EMBED_PROVIDER", "hash"),
+            openai_api_key: env_or("OPENAI_API_KEY", ""),
+            openai_embed_model: env_or("OPENAI_EMBED_MODEL", "text-embedding-3-small"),
+            turbo_bits: env_or("TURBO_BITS", "4").parse().unwrap_or(4),
         }
     }
 }

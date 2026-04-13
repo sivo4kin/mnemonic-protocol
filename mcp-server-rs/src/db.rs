@@ -160,12 +160,14 @@ fn l2_norm(v: &[f32]) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::embed;
+    use crate::embed::{HashEmbedder, Embedder};
+
+    fn embedder() -> HashEmbedder { HashEmbedder::default() }
 
     #[test]
     fn test_save_and_count() {
         let store = AttestationStore::in_memory().unwrap();
-        let emb = embed::embed_text("test content");
+        let emb = embedder().embed("test content");
         store.save_attestation(
             "att-1", "test content", "hash123", &["tag1".into()],
             "sol_tx_1", "ar_tx_1", "signer1", "2026-04-13T00:00:00Z",
@@ -178,16 +180,17 @@ mod tests {
     #[test]
     fn test_search_ranked() {
         let store = AttestationStore::in_memory().unwrap();
+        let e = embedder();
         for i in 0..3 {
             let content = format!("finding about topic {i}");
-            let emb = embed::embed_text(&content);
+            let emb = e.embed(&content);
             store.save_attestation(
                 &format!("att-{i}"), &content, &format!("h{i}"), &[],
                 &format!("sol{i}"), &format!("ar{i}"), "agent1", "2026-04-13",
                 &emb,
             ).unwrap();
         }
-        let query = embed::embed_text("topic 1");
+        let query = e.embed("topic 1");
         let results = store.search(&query, "agent1", 2).unwrap();
         assert_eq!(results.len(), 2);
         assert!(results[0].relevance_score >= results[1].relevance_score);

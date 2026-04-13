@@ -1,4 +1,5 @@
 mod arweave;
+mod compress;
 mod config;
 mod db;
 mod embed;
@@ -35,7 +36,6 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     let cfg = config::Config::from_env();
 
-    // Override transport/port from CLI if provided
     let transport = if std::env::var("MCP_TRANSPORT").is_ok() {
         cfg.transport.clone()
     } else {
@@ -46,12 +46,23 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("Identity: {}", keypair.pubkey());
     tracing::info!("did:sol: {}", identity::did_sol(&keypair));
 
+    // Build embedder (hash offline or OpenAI)
+    let embedder = embed::build_embedder(&cfg.embed_provider, &cfg.openai_api_key, &cfg.openai_embed_model);
+    let dim = embedder.dim();
+    tracing::info!("Embedder: {} ({}-dim)", embedder.provider_name(), dim);
+
+    // Build TurboQuant compressor
+    let compressor = compress::EmbeddingCompressor::new(dim, cfg.turbo_bits, 42);
+    tracing::info!("Compressor: TurboQuant {}-bit ({:.1}x ratio)", cfg.turbo_bits, compressor.compression_ratio());
+
     let store = db::AttestationStore::open(&cfg.database_path)?;
     let state = Arc::new(mcp::McpState {
         keypair,
         solana: solana::SolanaClient::new(&cfg.solana_rpc_url),
         arweave: arweave::ArweaveClient::new(&cfg.arweave_url),
         store: std::sync::Mutex::new(store),
+        embedder,
+        compressor,
     });
 
     match transport.as_str() {
@@ -72,9 +83,7 @@ async fn run_stdio(state: Arc<mcp::McpState>) -> anyhow::Result<()> {
 
     while let Some(line) = lines.next_line().await? {
         let line = line.trim().to_string();
-        if line.is_empty() {
-            continue;
-        }
+        if line.is_empty() { continue; }
 
         let req: mcp::JsonRpcRequest = match serde_json::from_str(&line) {
             Ok(r) => r,
@@ -95,7 +104,6 @@ async fn run_stdio(state: Arc<mcp::McpState>) -> anyhow::Result<()> {
         stdout.write_all(b"\n").await?;
         stdout.flush().await?;
     }
-
     Ok(())
 }
 
