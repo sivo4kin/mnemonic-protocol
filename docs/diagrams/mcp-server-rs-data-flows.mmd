@@ -1,0 +1,87 @@
+sequenceDiagram
+    autonumber
+    actor Client
+    participant Transport as HTTP / stdio transport
+    participant Payment as Payment layer (optional / planned)
+    participant RPC as JSON-RPC dispatcher
+    participant Tool as Tool handler
+    participant Embed as Embedder
+    participant TQ as TurboQuant
+    participant Hash as SHA-256
+    participant Ar as Arweave / Irys
+    participant Sol as Solana / SPL Memo
+    participant DB as SQLite
+
+    rect rgba(235, 245, 255, 0.7)
+        Note over Client,DB: sign_memory
+        Client->>Transport: tools/call(mnemonic_sign_memory)
+        opt Metered HTTP path (planned)
+            Transport->>Payment: check metering
+            alt payment satisfied
+                Payment-->>Transport: allow request
+            else payment required
+                Payment-->>Transport: HTTP 402 challenge
+            end
+        end
+        Transport->>RPC: JSON-RPC request
+        RPC->>Tool: sign_memory(content, tags)
+        Tool->>Embed: embed(content)
+        Embed-->>Tool: full embedding
+        Tool->>TQ: compress(embedding)
+        TQ-->>Tool: compressed bytes
+        Tool->>Hash: sha256(content)
+        Hash-->>Tool: content_hash
+        Tool->>Ar: write(payload + compressed embedding)
+        Ar-->>Tool: arweave_tx
+        Tool->>Sol: write_memo(hash + arweave_tx)
+        Sol-->>Tool: solana_tx
+        Tool->>DB: save attestation + full embedding
+        DB-->>Tool: ok
+        Tool-->>RPC: attestation result
+        RPC-->>Client: tx ids + signer + compression stats
+    end
+
+    rect rgba(235, 255, 235, 0.7)
+        Note over Client,DB: recall
+        Client->>Transport: tools/call(mnemonic_recall)
+        opt Metered HTTP path (planned)
+            Transport->>Payment: check metering
+            alt payment satisfied
+                Payment-->>Transport: allow request
+            else payment required
+                Payment-->>Transport: HTTP 402 challenge
+            end
+        end
+        Transport->>RPC: JSON-RPC request
+        RPC->>Tool: recall(query, limit)
+        Tool->>Embed: embed(query)
+        Embed-->>Tool: query embedding
+        Tool->>DB: search(full embeddings)
+        DB-->>Tool: ranked matches
+        Tool-->>RPC: recall result set
+        RPC-->>Client: top results
+    end
+
+    rect rgba(255, 245, 235, 0.7)
+        Note over Client,DB: verify
+        Client->>Transport: tools/call(mnemonic_verify)
+        Transport->>RPC: JSON-RPC request
+        RPC->>Tool: verify(solana_tx, arweave_tx)
+        Tool->>Sol: read memo / anchor
+        Sol-->>Tool: expected hash + arweave ref
+        Tool->>Ar: fetch payload
+        Ar-->>Tool: payload bytes
+        Tool->>Hash: recompute sha256(content)
+        Hash-->>Tool: actual hash
+        Tool-->>RPC: verified / tampered
+        RPC-->>Client: verification result
+    end
+
+    rect rgba(245, 235, 255, 0.7)
+        Note over Client,DB: prove_identity
+        Client->>Transport: tools/call(mnemonic_prove_identity)
+        Transport->>RPC: JSON-RPC request
+        RPC->>Tool: prove_identity(challenge)
+        Tool-->>RPC: ed25519 signature
+        RPC-->>Client: identity proof
+    end

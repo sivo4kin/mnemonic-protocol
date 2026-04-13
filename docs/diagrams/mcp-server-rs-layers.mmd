@@ -1,0 +1,93 @@
+flowchart LR
+    Client["MCP Client / Agent"]
+
+    subgraph L1["Layer 1 — Client Interfaces"]
+        MCPClient["Claude Code / Cursor / Bot"]
+        SDK["AgentMemory SDK<br/>(planned)"]
+    end
+
+    subgraph L2["Layer 2 — Transport / Ingress"]
+        Stdio["stdio transport"]
+        Http["HTTP /mcp transport"]
+        Pay["Payment + metering<br/>HTTP 402 / x402<br/>(planned for metered HTTP)"]
+    end
+
+    subgraph L3["Layer 3 — MCP Protocol"]
+        Rpc["JSON-RPC handler<br/>initialize / tools/list / tools/call"]
+    end
+
+    subgraph L4["Layer 4 — Tool Services"]
+        Who["mnemonic_whoami"]
+        Sign["mnemonic_sign_memory"]
+        Verify["mnemonic_verify"]
+        Prove["mnemonic_prove_identity"]
+        Recall["mnemonic_recall"]
+    end
+
+    subgraph L5["Layer 5 — Core Components"]
+        Id["Identity / keypair"]
+        Embed["Embedder<br/>hash or OpenAI"]
+        TQ["TurboQuant compressor"]
+        Hash["SHA-256 hashing"]
+        Db["SQLite attestation store"]
+        Sol["Solana adapter"]
+        Ar["Arweave / Irys adapter"]
+    end
+
+    subgraph L6["Layer 6 — Local State"]
+        KeyFile[("keypair file")]
+        DbFile[("attestations.db")]
+    end
+
+    subgraph EXT["External Systems"]
+        SolanaNet["Solana RPC + SPL Memo"]
+        ArweaveNet["Arweave / Irys"]
+        OpenAI["Embedding API<br/>(OpenAI optional)"]
+    end
+
+    Client --> MCPClient
+    Client --> SDK
+
+    MCPClient --> Stdio
+    MCPClient --> Http
+    SDK --> Http
+    Http --> Pay
+    Pay --> Rpc
+    Stdio --> Rpc
+
+    Rpc --> Who
+    Rpc --> Sign
+    Rpc --> Verify
+    Rpc --> Prove
+    Rpc --> Recall
+
+    Who --> Id
+    Who --> Db
+
+    Sign --> Id
+    Sign --> Embed
+    Sign --> TQ
+    Sign --> Hash
+    Sign --> Ar
+    Sign --> Sol
+    Sign --> Db
+
+    Recall --> Id
+    Recall --> Embed
+    Recall --> Db
+
+    Verify --> Sol
+    Verify --> Ar
+    Prove --> Id
+
+    Id --> KeyFile
+    Db --> DbFile
+    Embed --> OpenAI
+    Sol --> SolanaNet
+    Ar --> ArweaveNet
+
+    PayNote["ADR-019 direction:<br/>- metered search / commit<br/>- verify remains free<br/>- USDC-SPL settlement on Solana<br/>- x402 / HTTP 402 flow"]
+    RecallNote["Current Rust recall searches full embeddings in SQLite.<br/>Compressed embeddings are generated on write and included in the Arweave payload,<br/>but local recall does not yet query through a compressed index."]
+
+    PayNote -.-> Pay
+    RecallNote -.-> Recall
