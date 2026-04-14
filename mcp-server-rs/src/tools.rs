@@ -64,7 +64,7 @@ pub async fn sign_memory(
         "embed_dim": embedder.dim(),
         "turbo_bits": compressed.bit_width,
     });
-    let arweave_tx = arweave.write(&payload.to_string()).await?;
+    let arweave_tx = arweave.write(&payload.to_string(), keypair).await?;
     arweave.mine().await?;
 
     // 5. Anchor on Solana
