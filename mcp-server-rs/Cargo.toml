@@ -9,7 +9,7 @@ description = "Mnemonic MCP server — verifiable memory attestation primitive f
 tokio = { version = "1", features = ["full"] }
 
 # HTTP server (remote MCP transport)
-axum = { version = "0.8", features = ["json"] }
+axum = { version = "0.8", features = ["json", "macros"] }
 axum-extra = { version = "0.10", features = ["typed-header"] }
 tower-http = { version = "0.6", features = ["cors"] }
 
@@ -67,6 +67,13 @@ futures = "0.3"
 # TurboQuant compression (PolarQuant + QJL)
 turboquant = { git = "https://github.com/sivo4kin/turboquant-rs.git", branch = "master" }
 ndarray = "0.16"
+
+# Local embeddings (ONNX, all-MiniLM-L6-v2) — optional, needs ONNX runtime
+fastembed = { version = "5", optional = true }
+
+[features]
+default = []
+local-embed = ["fastembed"]
 
 [dev-dependencies]
 tokio-test = "0.4"

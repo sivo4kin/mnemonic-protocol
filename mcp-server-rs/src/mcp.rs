@@ -4,7 +4,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use solana_sdk::signature::Keypair;
 
-use crate::{arweave::ArweaveClient, compress::EmbeddingCompressor, db::AttestationStore, embed::Embedder, solana::SolanaClient, tools};
+use std::sync::Arc;
+use crate::{arweave::ArweaveClient, compress::EmbeddingCompressor, db::AttestationStore, embed::Embedder, pricing::PricingEngine, solana::SolanaClient, tools};
 
 /// JSON-RPC 2.0 request.
 #[derive(Debug, Deserialize)]
@@ -43,6 +44,22 @@ pub struct McpState {
     pub store: std::sync::Mutex<AttestationStore>,
     pub embedder: Box<dyn Embedder>,
     pub compressor: EmbeddingCompressor,
+
+    // Payment config
+    /// "none" | "balance" | "x402" | "both"
+    pub payment_mode: String,
+    pub treasury_pubkey: String,
+    pub usdc_mint: String,
+    pub sign_memory_cost_micro_usdc: i64,
+
+    // Dynamic pricing
+    pub pricing: Arc<PricingEngine>,
+    /// Solana memo tx fee in lamports (passed to CostHint).
+    pub sol_tx_fee_lamports: u64,
+
+    // Storage mode
+    /// "local" (default, free, SQLite only) or "full" (Arweave + Solana + SQLite)
+    pub storage_mode: String,
 }
 
 // Safety: We only access store through std::sync::Mutex (short critical sections, no await)
@@ -139,7 +156,7 @@ async fn handle_tool_call(name: &str, args: &Value, state: &McpState) -> Result<
         "mnemonic_whoami" => {
             // DB-only: lock, query, release before returning
             let store = state.store.lock().unwrap();
-            tools::whoami(&state.keypair, &store)
+            tools::whoami(&state.keypair, &store, &state.storage_mode)
         }
         "mnemonic_sign_memory" => {
             let content = args["content"].as_str().ok_or("content required")?.to_string();
@@ -147,15 +164,17 @@ async fn handle_tool_call(name: &str, args: &Value, state: &McpState) -> Result<
                 .and_then(|t| t.as_array())
                 .map(|a| a.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
                 .unwrap_or_default();
-            // This tool does network I/O then DB — handled inside tools::sign_memory
-            tools::sign_memory(&state.keypair, &state.solana, &state.arweave, &state.store, state.embedder.as_ref(), &state.compressor, &content, &tags)
-                .await.map_err(|e| e.to_string())?
+            let cost_hint = state.pricing.cost_hint(state.sol_tx_fee_lamports);
+            tools::sign_memory(
+                &state.keypair, &state.solana, &state.arweave, &state.store,
+                state.embedder.as_ref(), &state.compressor,
+                &content, &tags, &cost_hint, &state.storage_mode,
+            ).await.map_err(|e| e.to_string())?
         }
         "mnemonic_verify" => {
             let sol = args.get("solana_tx").and_then(|v| v.as_str());
             let ar = args.get("arweave_tx").and_then(|v| v.as_str());
-            // Network-only, no DB
-            tools::verify(&state.solana, &state.arweave, sol, ar)
+            tools::verify(&state.solana, &state.arweave, &state.store, sol, ar, &state.storage_mode)
                 .await.map_err(|e| e.to_string())?
         }
         "mnemonic_prove_identity" => {
