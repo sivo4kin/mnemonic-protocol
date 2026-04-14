@@ -5,6 +5,29 @@ Verifiable memory attestation primitive for AI agents, delivered as an MCP serve
 > Mnemonic gives any AI agent a Solana keypair identity and the ability to create
 > permanent, hash-anchored, semantically searchable proofs of its work on Arweave.
 
+## Status
+
+This Python implementation is the **reference / MVP backend**.
+
+Current scope:
+
+- MCP over **stdio only**
+- 5 core attestation tools
+- local SQLite recall index
+- local `fastembed` embeddings when available, with deterministic hash fallback
+
+Not implemented here:
+
+- HTTP transport
+- payment gating
+- API key and deposit endpoints
+- x402
+- dynamic pricing
+- TurboQuant compression
+- admin stats endpoints
+
+For the fuller production-oriented backend, see `mcp-server-rs/`.
+
 ## 5 Tools
 
 | Tool | Description |
@@ -62,10 +85,10 @@ MCP Host (Claude Code / Cursor / Codex)
     │ JSON-RPC (stdio)
     ▼
 mnemonic-mcp-server
-    ├── identity.py      ← Ed25519 keypair, did:sol, did:key
+    ├── identity.py       ← Ed25519 keypair, did:sol, did:key
     ├── solana_client.py  ← SPL Memo write/read
-    ├── arweave_client.py ← permanent storage write/read
-    ├── embed.py          ← fastembed (384-dim, local)
+    ├── arweave_client.py ← Arweave write/read (arlocal + simple Irys upload)
+    ├── embed.py          ← fastembed local embeddings or hash fallback
     ├── db.py             ← SQLite attestation index
     ├── tools.py          ← 5 tool implementations
     └── server.py         ← MCP protocol handler

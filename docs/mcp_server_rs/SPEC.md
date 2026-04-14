@@ -98,9 +98,9 @@ DIDs derived from the keypair:
 ```
 content
   │
-  ├─ embed()          → f32[384] (hash-based offline or OpenAI text-embedding-3-small)
+  ├─ embed()          → f32[384] or f32[1536] (hash-based offline or OpenAI)
   │
-  ├─ TurboQuant       → compressed bytes (4-bit, 32x ratio vs f32)
+  ├─ TurboQuant       → compressed bytes
   │
   ├─ SHA-256          → content_hash (hex)
   │
@@ -128,17 +128,19 @@ content
 | Value | Backend | Dimension | Notes |
 |-------|---------|-----------|-------|
 | `hash` (default) | SHA-256 shards, offline | 384 | No API calls, deterministic |
-| `openai` | `text-embedding-3-small` | 1536 | Requires `OPENAI_API_KEY` |
+| `openai` | `text-embedding-3-small` by default | 1536 | Requires `OPENAI_API_KEY` |
+
+If `EMBED_PROVIDER=openai` but the API call fails, the code falls back to hash embeddings while still returning `openai` as the configured provider name at embedder construction time only when the API key is present.
 
 ### TurboQuant compression
 
 Scalar quantisation on embedding values. Default `TURBO_BITS=4`.
 
-| Bits | Compression ratio | Storage (384-dim) |
-|------|------------------|-------------------|
-| 2 | 64x | 12 bytes |
-| 3 | 42.7x | 18 bytes |
-| 4 | 32x | 24 bytes |
+| Bits | Compression ratio |
+|------|-------------------|
+| 2 | 64x |
+| 3 | 42.7x |
+| 4 | 32x |
 
 The full f32 vector is stored locally in SQLite for accurate cosine recall.  
 The compressed vector is stored on Arweave to enable future remote index reconstruction.
@@ -207,12 +209,13 @@ Operator                       MCP Client
    │                     │  Bearer mnm_xxx   │
    │                     └─────────┬────────┘
    │                               │
-   │                   check balance ≥ cost
+   │                   check balance ≥ quoted cost
+   │                   reserve configured balance amount
    │                   execute tool
-   │                   deduct balance
+   │                   refund on failure
 ```
 
-**API key format:** `mnm_` + 48 hex chars (96 bits of randomness, counter-seeded PRNG).
+**API key format:** `mnm_` + 48 hex chars (96 bits of randomness).
 
 ### Path B — x402 per-call payment (autonomous agents)
 
@@ -260,17 +263,17 @@ Starts at server startup, repeats every `PRICE_REFRESH_SECS` (default 1800s = 30
 2. `GET https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd` → USD/SOL
 3. Recompute and atomically store new price
 
-Price is stored in `AtomicI64`/`AtomicU64` — reads are always wait-free, no lock contention on hot path.
+Price is stored in atomics — reads are wait-free on the hot path.
 
-### Initial startup
+### Important implementation note
 
-On first boot, the engine attempts a price fetch before accepting connections. If the fetch fails (no network, API down), the server falls back to `SIGN_MEMORY_COST_MICRO_USDC` as a floor price and logs a warning.
+The HTTP payment gate quotes and validates against the **live dynamic price**, but the current balance reservation path deducts `SIGN_MEMORY_COST_MICRO_USDC` from the API key before tool execution and refunds that amount on failure. If dynamic price diverges from the configured floor/base value, quote and actual reserved charge may differ. This is a current-code caveat, not an intended long-term API contract.
 
 ---
 
 ## 11. P&L Tracking
 
-Every completed `mnemonic_sign_memory` call appends a row to `attestation_costs`:
+Every completed `mnemonic_sign_memory` call attempts to append a row to `attestation_costs`:
 
 | Column | Description |
 |--------|-------------|
@@ -278,7 +281,7 @@ Every completed `mnemonic_sign_memory` call appends a row to `attestation_costs`
 | `irys_cost_lamports` | Irys quote at time of call |
 | `sol_tx_fee_lamports` | Memo tx fee estimate |
 | `sol_price_usdc` | SOL/USDC rate at time of call |
-| `earned_micro_usdc` | Amount charged to caller |
+| `earned_micro_usdc` | Amount recorded from pricing cost hint |
 | `created_at` | Timestamp |
 
 `GET /admin/stats?days=N` aggregates this table to show earned, cost (converted to micro-USDC), net margin, and current pricing state.
@@ -294,7 +297,7 @@ attestations (
     attestation_id TEXT PK,
     content TEXT,
     content_hash TEXT,
-    tags TEXT,              -- JSON array
+    tags TEXT,
     solana_tx TEXT,
     arweave_tx TEXT,
     signer_pubkey TEXT,
@@ -304,7 +307,7 @@ attestations (
 attestation_embeddings (
     attestation_id TEXT PK → attestations,
     embedding_dim INTEGER,
-    embedding BLOB          -- f32 little-endian packed
+    embedding BLOB
 );
 
 api_keys (
@@ -319,14 +322,14 @@ payment_events (
     event_id TEXT PK,
     api_key TEXT,
     amount_micro_usdc INTEGER,
-    event_type TEXT,        -- 'deposit' | 'charge' | 'refund'
+    event_type TEXT,
     tx_sig TEXT,
     description TEXT,
     created_at TEXT
 );
 
 x402_nonces (
-    tx_sig TEXT PK,         -- UNIQUE, prevents replay
+    tx_sig TEXT PK,
     used_at TEXT
 );
 
@@ -362,7 +365,7 @@ All configuration via environment variables (`.env` supported via `dotenvy`).
 | `PAYMENT_MODE` | `none` | `none` / `balance` / `x402` / `both` |
 | `TREASURY_PUBKEY` | _(empty)_ | Solana pubkey receiving USDC payments |
 | `USDC_MINT` | `EPjFWdd5...` | USDC SPL mint (mainnet default) |
-| `SIGN_MEMORY_COST_MICRO_USDC` | `1000` | Floor price (1000 μUSDC = $0.001) |
+| `SIGN_MEMORY_COST_MICRO_USDC` | `1000` | Floor/base configured charge in micro-USDC |
 | `PRICE_REFRESH_SECS` | `1800` | Pricing refresh interval (seconds) |
 | `PRICING_MARGIN_BPS` | `2000` | Margin above break-even (2000 = 20%) |
 | `TYPICAL_PAYLOAD_BYTES` | `2048` | Byte count used for Irys price quotes |
@@ -384,7 +387,7 @@ mcp-server-rs/src/
 ├── arweave.rs     — ArweaveClient: arlocal stub + Irys ANS-104 production upload
 ├── solana.rs      — SolanaClient: SPL Memo write/read, USDC transfer verification
 ├── payment.rs     — PaymentGate enum, check_payment(), x402 wire types, balance path
-├── pricing.rs     — PricingEngine (atomic), Irys/CoinGecko fetchers, compute_price()
+├── pricing.rs     — PricingEngine, upstream fetchers, compute_price()
 └── config.rs      — Config struct, from_env()
 ```
 
@@ -393,7 +396,9 @@ mcp-server-rs/src/
 ## 15. Security Notes
 
 - **x402 replay prevention:** `x402_nonces` uses a `UNIQUE` primary key. A race condition where two requests present the same tx_sig simultaneously is resolved by SQLite's serialised write lock — only one succeeds.
-- **Balance deduction:** deducted _after_ successful tool execution. A failed Arweave or Solana call does not charge the caller.
+- **Balance charging semantics:** the HTTP payment gate currently reserves balance _before_ executing `mnemonic_sign_memory` and writes a compensating refund-style event if the tool fails. This is the current code path.
+- **Pricing caveat:** live quoted price and reserved balance amount can diverge if dynamic pricing differs from the configured `SIGN_MEMORY_COST_MICRO_USDC` value.
+- **Deposit ownership verification:** `/deposit` verifies that the USDC transfer reached the treasury for the configured mint, but full owner-pubkey-to-transaction signer verification is still marked as TODO in code.
 - **Keypair storage:** stored at `MNEMONIC_KEYPAIR_PATH` as a JSON array of bytes. Restrict file permissions (`chmod 600`). The key signs both Arweave bundle items and Solana transactions.
 - **Admin endpoint:** `GET /admin/stats` is currently unauthenticated. For production, place behind a reverse proxy with IP allowlist or add an `ADMIN_SECRET` header check.
 - **USDC mint verification:** the deposit and x402 paths verify both the _recipient_ (treasury pubkey) and the _mint_ (USDC). A transfer of a different SPL token to the treasury is rejected.

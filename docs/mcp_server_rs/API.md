@@ -22,7 +22,7 @@ The stdio transport only exposes the MCP surface (no payment, trusted local clie
 
 ## MCP JSON-RPC — `POST /mcp`
 
-Follows [JSON-RPC 2.0](https://www.jsonrpc.org/specification) and the [MCP protocol spec `2025-06-18`](https://modelcontextprotocol.io).
+Follows [JSON-RPC 2.0](https://www.jsonrpc.org/specification) and the MCP protocol shape implemented in `mcp.rs`.
 
 ### Request envelope
 
@@ -33,7 +33,7 @@ Follows [JSON-RPC 2.0](https://www.jsonrpc.org/specification) and the [MCP proto
   "method": "tools/call",
   "params": {
     "name": "mnemonic_sign_memory",
-    "arguments": { }
+    "arguments": {}
   }
 }
 ```
@@ -54,11 +54,23 @@ Follows [JSON-RPC 2.0](https://www.jsonrpc.org/specification) and the [MCP proto
 
 | Method | Description |
 |--------|-------------|
-| `initialize` | Handshake — returns server capabilities |
+| `initialize` | Handshake — returns protocol version, capabilities, serverInfo |
 | `tools/list` | List all available tools |
 | `tools/call` | Invoke a named tool |
-| `ping` | Heartbeat |
+| `ping` | Heartbeat/no-op |
 | `notifications/initialized` | Client-ready notification (no-op) |
+
+### `initialize` response
+
+Current code returns:
+
+```json
+{
+  "protocolVersion": "2025-06-18",
+  "capabilities": {"tools": {}},
+  "serverInfo": {"name": "mnemonic", "version": "0.1.0"}
+}
+```
 
 ---
 
@@ -86,13 +98,13 @@ Returns the server's cryptographic identity and attestation count. Sync, no paym
 
 Creates a verifiable memory attestation. Full pipeline: embed → TurboQuant compress → SHA-256 → Arweave (Irys, ANS-104 signed) → Solana SPL Memo anchor → SQLite index.
 
-**Cost:** charged per call when `PAYMENT_MODE != none` (see [Payment](#payment)).
+**Cost:** charged per call when `PAYMENT_MODE != none` on the HTTP transport.
 
 **Input:**
 ```json
 {
   "content": "string (required) — text to attest",
-  "tags":    ["string"] "(optional)"
+  "tags": ["string"]
 }
 ```
 
@@ -118,6 +130,12 @@ Creates a verifiable memory attestation. Full pipeline: embed → TurboQuant com
 }
 ```
 
+Notes:
+
+- `embed_dim` depends on provider (`384` for hash, `1536` for default OpenAI small model).
+- `original_bytes` equals `embed_dim * 4` because full vectors are `f32`.
+- the returned `arweave_tx` is the ID returned by the Arweave/Irys upload path.
+
 ---
 
 ### `mnemonic_verify`
@@ -135,11 +153,11 @@ Fetches and cross-checks an attestation. Reads the Solana memo for the content h
 **Output — verified:**
 ```json
 {
-  "status":          "verified",
-  "content_hash":    "sha256 hex",
-  "solana_tx":       "...",
-  "arweave_tx":      "...",
-  "signer":          "base58 pubkey",
+  "status": "verified",
+  "content_hash": "sha256 hex",
+  "solana_tx": "...",
+  "arweave_tx": "...",
+  "signer": "base58 pubkey",
   "content_preview": "first 200 chars",
   "has_compressed_embedding": true
 }
@@ -148,9 +166,9 @@ Fetches and cross-checks an attestation. Reads the Solana memo for the content h
 **Output — tampered:**
 ```json
 {
-  "status":        "tampered",
+  "status": "tampered",
   "expected_hash": "...",
-  "actual_hash":   "..."
+  "actual_hash": "..."
 }
 ```
 
@@ -173,10 +191,10 @@ Signs an arbitrary challenge with the server's Ed25519 key. Pure crypto, no netw
 ```json
 {
   "public_key": "base58",
-  "did_sol":    "did:sol:...",
-  "challenge":  "...",
-  "signature":  "hex (128 chars)",
-  "algorithm":  "Ed25519"
+  "did_sol": "did:sol:...",
+  "challenge": "...",
+  "signature": "hex (128 chars)",
+  "algorithm": "Ed25519"
 }
 ```
 
@@ -197,18 +215,18 @@ Semantic search over the local attestation index using cosine similarity on stor
 **Output:**
 ```json
 {
-  "query":               "...",
-  "embed_provider":      "hash | openai",
-  "total_attestations":  42,
+  "query": "...",
+  "embed_provider": "hash | openai",
+  "total_attestations": 42,
   "results": [
     {
-      "attestation_id":  "uuid",
-      "content":         "...",
-      "content_hash":    "sha256 hex",
-      "tags":            ["..."],
-      "solana_tx":       "...",
-      "arweave_tx":      "...",
-      "created_at":      "ISO 8601",
+      "attestation_id": "uuid",
+      "content": "...",
+      "content_hash": "sha256 hex",
+      "tags": ["..."],
+      "solana_tx": "...",
+      "arweave_tx": "...",
+      "created_at": "ISO 8601",
       "relevance_score": 0.94
     }
   ]
@@ -219,14 +237,14 @@ Semantic search over the local attestation index using cosine similarity on stor
 
 ## Payment
 
-`mnemonic_sign_memory` is the only paid tool. Set `PAYMENT_MODE` in env:
+`mnemonic_sign_memory` is the only paid tool on HTTP. Set `PAYMENT_MODE` in env:
 
 | Mode | Behaviour |
 |------|-----------|
-| `none` | Open access — no payment required (default, local dev) |
-| `balance` | `Authorization: Bearer mnm_<key>` header; balance deducted on success |
+| `none` | Open access — no payment required |
+| `balance` | `Authorization: Bearer mnm_<key>` header; balance-checked and reserved |
 | `x402` | `X-Payment: <json>` header with verified Solana USDC tx |
-| `both` | Balance checked first; x402 accepted as fallback |
+| `both` | Balance checked first when Authorization is present; x402 accepted as fallback |
 
 ### Balance mode — Authorization header
 
@@ -234,7 +252,17 @@ Semantic search over the local attestation index using cosine similarity on stor
 Authorization: Bearer mnm_6a2f...c91d
 ```
 
-Balance is deducted **after** successful tool execution. Insufficient balance returns HTTP 401.
+Current code behavior:
+
+- checks that balance is at least the current quoted cost
+- reserves balance before running the tool
+- issues a refund-style credit event if tool execution fails
+
+Important caveat:
+
+- the current reservation path deducts `SIGN_MEMORY_COST_MICRO_USDC`
+- the gate itself quotes against the live dynamic price
+- if those values diverge, docs and actual charge semantics may differ until reconciled in code
 
 ### x402 mode — per-call USDC payment
 
@@ -243,12 +271,12 @@ Balance is deducted **after** successful tool execution. Insufficient balance re
 {
   "x402Version": 1,
   "accepts": [{
-    "scheme":             "exact",
-    "network":            "solana-mainnet",
-    "maxAmountRequired":  "1284",
-    "asset":              "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
-    "payTo":              "<TREASURY_PUBKEY>",
-    "description":        "mnemonic_sign_memory attestation fee"
+    "scheme": "exact",
+    "network": "solana-mainnet",
+    "maxAmountRequired": "1284",
+    "asset": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+    "payTo": "<TREASURY_PUBKEY>",
+    "description": "mnemonic_sign_memory attestation fee"
   }]
 }
 ```
@@ -257,9 +285,9 @@ Balance is deducted **after** successful tool execution. Insufficient balance re
 ```
 X-Payment: {"tx_sig":"<base58 solana tx>","network":"solana-mainnet"}
 ```
-or base64-encoded JSON (Coinbase CDK format).
+or base64-encoded JSON.
 
-The server verifies the on-chain USDC transfer (SPL token balance delta), marks the tx sig as used (replay prevention), then proceeds.
+The server verifies the on-chain USDC transfer, marks the tx sig as used, then proceeds.
 
 ---
 
@@ -277,7 +305,7 @@ Create a new pre-funded API key with zero initial balance.
 **Response `200`:**
 ```json
 {
-  "api_key":            "mnm_6a2f...c91d",
+  "api_key": "mnm_6a2f...c91d",
   "balance_micro_usdc": 0
 }
 ```
@@ -291,9 +319,9 @@ Query balance for an API key.
 **Response `200`:**
 ```json
 {
-  "api_key":            "mnm_6a2f...c91d",
+  "api_key": "mnm_6a2f...c91d",
   "balance_micro_usdc": 42000,
-  "balance_usdc":       0.042
+  "balance_usdc": 0.042
 }
 ```
 
@@ -311,21 +339,26 @@ The caller must first send USDC to `TREASURY_PUBKEY` on Solana, then POST the tx
 ```json
 {
   "api_key": "mnm_6a2f...c91d",
-  "tx_sig":  "base58 solana tx signature"
+  "tx_sig": "base58 solana tx signature"
 }
 ```
 
 **Response `200`:**
 ```json
 {
-  "api_key":               "mnm_6a2f...c91d",
-  "deposited_micro_usdc":  50000,
+  "api_key": "mnm_6a2f...c91d",
+  "deposited_micro_usdc": 50000,
   "new_balance_micro_usdc": 92000
 }
 ```
 
-**Response `400`:** tx does not transfer USDC to treasury, or already applied.  
+**Response `400`:** tx does not transfer USDC to treasury, already applied, or API key owner binding is missing.  
 **Response `502`:** Solana RPC error.
+
+Current limitation:
+
+- code requires `owner_pubkey` to be set on the API key
+- full verification that the owner pubkey signed the deposit transaction is still marked TODO
 
 ---
 
@@ -336,21 +369,21 @@ P&L dashboard. Aggregates over the last `N` days (default `7`).
 **Response `200`:**
 ```json
 {
-  "period_days":          7,
-  "attestations":         142,
-  "earned_micro_usdc":    142000,
-  "earned_usdc":          0.142,
-  "cost_sol_lamports":    1291200,
+  "period_days": 7,
+  "attestations": 142,
+  "earned_micro_usdc": 142000,
+  "earned_usdc": 0.142,
+  "cost_sol_lamports": 1291200,
   "cost_micro_usdc_equiv": 91000,
-  "cost_usdc_equiv":      0.091,
-  "net_micro_usdc":       51000,
-  "net_usdc":             0.051,
-  "margin_pct":           35.9,
-  "avg_sol_price_usdc":   142.5,
+  "cost_usdc_equiv": 0.091,
+  "net_micro_usdc": 51000,
+  "net_usdc": 0.051,
+  "margin_pct": 35.9,
+  "avg_sol_price_usdc": 142.5,
   "pricing": {
     "current_price_micro_usdc": 1284,
-    "current_sol_price_usdc":   142.5,
-    "current_irys_lamports":    4200
+    "current_sol_price_usdc": 142.5,
+    "current_irys_lamports": 4200
   }
 }
 ```
@@ -383,7 +416,7 @@ Liveness check.
 |------|---------|
 | `-32700` | Parse error |
 | `-32603` | Internal / tool error |
-| `-32600` | Payment / auth error |
+| `-32600` | Payment / auth error body is wrapped by HTTP handler |
 
 ### HTTP errors (management surface)
 
