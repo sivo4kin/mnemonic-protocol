@@ -5,6 +5,7 @@ mod config;
 mod db;
 mod embed;
 mod identity;
+mod lineage;
 mod mcp;
 mod payment;
 mod pricing;

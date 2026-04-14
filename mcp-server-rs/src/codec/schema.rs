@@ -11,6 +11,20 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+/// Maximum parent references per artifact.
+pub const MAX_PARENTS: usize = 16;
+/// Maximum DAG depth for cycle detection and traversal.
+pub const MAX_DEPTH: usize = 64;
+
+/// Parent reference — links an artifact to its parent(s) in the DAG.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ParentRef {
+    pub artifact_id: String,
+    /// Optional semantic role: "context", "state", "trigger", "dependency"
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
+}
+
 /// Artifact type identifiers.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ArtifactType {
