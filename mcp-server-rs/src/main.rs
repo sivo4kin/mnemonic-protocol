@@ -69,7 +69,7 @@ async fn mcp_handler(
     let is_sign_memory = req.method == "tools/call"
         && req.params.get("name").and_then(|n| n.as_str()) == Some("mnemonic_sign_memory");
 
-    if is_sign_memory && state.payment_mode != "none" {
+    if is_sign_memory && state.payment_mode != "none" && state.storage_mode != "local" {
         // Use live price from pricing engine (refreshed in background)
         let current_cost = state.pricing.current_price();
         let gate = payment::check_payment(
@@ -333,6 +333,8 @@ async fn main() -> anyhow::Result<()> {
         compressor.compression_ratio()
     );
 
+    tracing::info!("Storage mode: {} ({})", cfg.storage_mode,
+        if cfg.storage_mode == "local" { "free, SQLite only" } else { "Arweave + Solana + SQLite" });
     tracing::info!("Payment mode: {}", cfg.payment_mode);
 
     // ── Pricing engine ────────────────────────────────────────────────────────
@@ -382,6 +384,7 @@ async fn main() -> anyhow::Result<()> {
         sign_memory_cost_micro_usdc: cfg.sign_memory_cost_micro_usdc,
         pricing,
         sol_tx_fee_lamports: cfg.sol_tx_fee_lamports,
+        storage_mode: cfg.storage_mode.clone(),
     });
 
     match transport.as_str() {

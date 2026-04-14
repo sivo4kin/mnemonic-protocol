@@ -56,6 +56,10 @@ pub struct McpState {
     pub pricing: Arc<PricingEngine>,
     /// Solana memo tx fee in lamports (passed to CostHint).
     pub sol_tx_fee_lamports: u64,
+
+    // Storage mode
+    /// "local" (default, free, SQLite only) or "full" (Arweave + Solana + SQLite)
+    pub storage_mode: String,
 }
 
 // Safety: We only access store through std::sync::Mutex (short critical sections, no await)
@@ -152,7 +156,7 @@ async fn handle_tool_call(name: &str, args: &Value, state: &McpState) -> Result<
         "mnemonic_whoami" => {
             // DB-only: lock, query, release before returning
             let store = state.store.lock().unwrap();
-            tools::whoami(&state.keypair, &store)
+            tools::whoami(&state.keypair, &store, &state.storage_mode)
         }
         "mnemonic_sign_memory" => {
             let content = args["content"].as_str().ok_or("content required")?.to_string();
@@ -164,14 +168,13 @@ async fn handle_tool_call(name: &str, args: &Value, state: &McpState) -> Result<
             tools::sign_memory(
                 &state.keypair, &state.solana, &state.arweave, &state.store,
                 state.embedder.as_ref(), &state.compressor,
-                &content, &tags, &cost_hint,
+                &content, &tags, &cost_hint, &state.storage_mode,
             ).await.map_err(|e| e.to_string())?
         }
         "mnemonic_verify" => {
             let sol = args.get("solana_tx").and_then(|v| v.as_str());
             let ar = args.get("arweave_tx").and_then(|v| v.as_str());
-            // Network-only, no DB
-            tools::verify(&state.solana, &state.arweave, sol, ar)
+            tools::verify(&state.solana, &state.arweave, &state.store, sol, ar, &state.storage_mode)
                 .await.map_err(|e| e.to_string())?
         }
         "mnemonic_prove_identity" => {

@@ -14,7 +14,7 @@ use crate::{
 };
 
 /// Tool 1: whoami (sync — DB only)
-pub fn whoami(keypair: &Keypair, store: &AttestationStore) -> serde_json::Value {
+pub fn whoami(keypair: &Keypair, store: &AttestationStore, storage_mode: &str) -> serde_json::Value {
     let pubkey = identity::pubkey_base58(keypair);
     let count = store.count(&pubkey).unwrap_or(0);
     serde_json::json!({
@@ -22,10 +22,14 @@ pub fn whoami(keypair: &Keypair, store: &AttestationStore) -> serde_json::Value 
         "did_sol": identity::did_sol(keypair),
         "did_key": identity::did_key(keypair),
         "attestation_count": count,
+        "storage_mode": storage_mode,
     })
 }
 
-/// Tool 2: sign_memory (async — embed → compress → arweave → solana → DB)
+/// Tool 2: sign_memory
+///
+/// In "full" mode: embed → compress → Arweave → Solana SPL Memo → SQLite
+/// In "local" mode: embed → compress → SQLite only (no blockchain, free, instant)
 pub async fn sign_memory(
     keypair: &Keypair,
     solana: &SolanaClient,
@@ -36,6 +40,7 @@ pub async fn sign_memory(
     content: &str,
     tags: &[String],
     cost_hint: &CostHint,
+    storage_mode: &str,
 ) -> anyhow::Result<serde_json::Value> {
     let pubkey = identity::pubkey_base58(keypair);
     let attestation_id = uuid::Uuid::new_v4().to_string();
@@ -51,44 +56,51 @@ pub async fn sign_memory(
     // 3. SHA-256 of content
     let content_hash = hex::encode(Sha256::digest(content.as_bytes()));
 
-    // 4. Write to Arweave (includes compressed embedding for future index reconstruction)
-    let payload = serde_json::json!({
-        "content": content,
-        "content_hash": content_hash,
-        "tags": tags,
-        "signer": pubkey,
-        "timestamp": now,
-        "embedding_compressed": base64::Engine::encode(
-            &base64::engine::general_purpose::STANDARD,
-            &compressed_bytes,
-        ),
-        "embed_provider": embedder.provider_name(),
-        "embed_dim": embedder.dim(),
-        "turbo_bits": compressed.bit_width,
-    });
-    let arweave_tx = arweave.write(&payload.to_string(), keypair).await?;
-    arweave.mine().await?;
+    let (solana_tx, arweave_tx) = if storage_mode == "local" {
+        // Local mode: skip blockchain, use synthetic IDs
+        let local_ar = format!("local:{}", &attestation_id[..8]);
+        let local_sol = format!("local:{}", &content_hash[..16]);
+        (local_sol, local_ar)
+    } else {
+        // Full mode: Arweave + Solana
+        let payload = serde_json::json!({
+            "content": content,
+            "content_hash": content_hash,
+            "tags": tags,
+            "signer": pubkey,
+            "timestamp": now,
+            "embedding_compressed": base64::Engine::encode(
+                &base64::engine::general_purpose::STANDARD,
+                &compressed_bytes,
+            ),
+            "embed_provider": embedder.provider_name(),
+            "embed_dim": embedder.dim(),
+            "turbo_bits": compressed.bit_width,
+        });
+        let ar_tx = arweave.write(&payload.to_string(), keypair).await?;
+        arweave.mine().await?;
 
-    // 5. Anchor on Solana
-    let memo = serde_json::json!({"h": content_hash, "a": arweave_tx, "v": 1});
-    let solana_tx = solana.write_memo(keypair, &memo.to_string()).await?;
+        let memo = serde_json::json!({"h": content_hash, "a": ar_tx, "v": 1});
+        let sol_tx = solana.write_memo(keypair, &memo.to_string()).await?;
+        (sol_tx, ar_tx)
+    };
 
-    // 6. Save locally (full embedding for search, compressed for storage reference)
-    //    and record P&L cost entry in the same lock scope.
+    // Save locally (both modes)
     {
         let store = store.lock().unwrap();
         store.save_attestation(
             &attestation_id, content, &content_hash, tags,
             &solana_tx, &arweave_tx, &pubkey, &now, &embedding,
         )?;
-        // Best-effort — don't fail the whole call if cost recording fails.
-        let _ = store.record_attestation_cost(
-            &attestation_id,
-            cost_hint.irys_lamports,
-            cost_hint.sol_tx_fee_lamports,
-            cost_hint.sol_price_usdc,
-            cost_hint.charge_micro_usdc,
-        );
+        if storage_mode != "local" {
+            let _ = store.record_attestation_cost(
+                &attestation_id,
+                cost_hint.irys_lamports,
+                cost_hint.sol_tx_fee_lamports,
+                cost_hint.sol_price_usdc,
+                cost_hint.charge_micro_usdc,
+            );
+        }
     }
 
     let ratio = compressor.compression_ratio();
@@ -100,6 +112,7 @@ pub async fn sign_memory(
         "signer": pubkey,
         "did_sol": identity::did_sol(keypair),
         "timestamp": now,
+        "storage_mode": storage_mode,
         "embed_provider": embedder.provider_name(),
         "embed_dim": embedder.dim(),
         "compression": {
@@ -112,13 +125,24 @@ pub async fn sign_memory(
     }))
 }
 
-/// Tool 3: verify (async — network only)
+/// Tool 3: verify
+///
+/// In "full" mode: fetch from Solana + Arweave → recompute hash
+/// In "local" mode: verify from SQLite attestation store
 pub async fn verify(
     solana: &SolanaClient,
     arweave: &ArweaveClient,
+    store: &std::sync::Mutex<AttestationStore>,
     solana_tx: Option<&str>,
     arweave_tx: Option<&str>,
+    storage_mode: &str,
 ) -> anyhow::Result<serde_json::Value> {
+    // Local mode: look up by solana_tx (which is "local:..." synthetic ID) in SQLite
+    if storage_mode == "local" {
+        return verify_local(store, solana_tx, arweave_tx);
+    }
+
+    // Full mode: on-chain verification
     if solana_tx.is_none() && arweave_tx.is_none() {
         return Ok(serde_json::json!({"status": "error", "message": "Provide solana_tx or arweave_tx"}));
     }
@@ -164,6 +188,48 @@ pub async fn verify(
     }
 
     Ok(serde_json::json!({"status": "hash_computed", "content_hash": actual_hash}))
+}
+
+/// Local-mode verification: look up attestation in SQLite and recompute hash.
+fn verify_local(
+    store: &std::sync::Mutex<AttestationStore>,
+    solana_tx: Option<&str>,
+    _arweave_tx: Option<&str>,
+) -> anyhow::Result<serde_json::Value> {
+    let lookup_id = solana_tx.or(_arweave_tx)
+        .ok_or_else(|| anyhow::anyhow!("provide solana_tx or arweave_tx"))?;
+
+    let store = store.lock().unwrap();
+    let att = store.find_by_tx(lookup_id)?;
+
+    match att {
+        Some(a) => {
+            let actual_hash = hex::encode(Sha256::digest(a.content.as_bytes()));
+            if actual_hash == a.content_hash {
+                Ok(serde_json::json!({
+                    "status": "verified",
+                    "storage_mode": "local",
+                    "content_hash": actual_hash,
+                    "solana_tx": a.solana_tx,
+                    "arweave_tx": a.arweave_tx,
+                    "signer": a.signer_pubkey,
+                    "content_preview": &a.content[..a.content.len().min(200)],
+                }))
+            } else {
+                Ok(serde_json::json!({
+                    "status": "tampered",
+                    "storage_mode": "local",
+                    "expected_hash": a.content_hash,
+                    "actual_hash": actual_hash,
+                }))
+            }
+        }
+        None => Ok(serde_json::json!({
+            "status": "not_found",
+            "storage_mode": "local",
+            "lookup_id": lookup_id,
+        })),
+    }
 }
 
 /// Tool 4: prove_identity (sync — pure crypto)

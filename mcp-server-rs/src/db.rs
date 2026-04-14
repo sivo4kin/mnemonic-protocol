@@ -277,6 +277,26 @@ impl AttestationStore {
         })
     }
 
+    /// Find an attestation by solana_tx or arweave_tx (for local-mode verify).
+    pub fn find_by_tx(&self, tx_id: &str) -> anyhow::Result<Option<AttestationRow>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT attestation_id, content, content_hash, solana_tx, arweave_tx, signer_pubkey
+             FROM attestations WHERE solana_tx = ?1 OR arweave_tx = ?1 LIMIT 1"
+        )?;
+        let mut rows = stmt.query(params![tx_id])?;
+        match rows.next()? {
+            Some(row) => Ok(Some(AttestationRow {
+                attestation_id: row.get(0)?,
+                content: row.get(1)?,
+                content_hash: row.get(2)?,
+                solana_tx: row.get(3)?,
+                arweave_tx: row.get(4)?,
+                signer_pubkey: row.get(5)?,
+            })),
+            None => Ok(None),
+        }
+    }
+
     pub fn count(&self, signer: &str) -> anyhow::Result<i64> {
         let count: i64 = self.conn.query_row(
             "SELECT COUNT(*) FROM attestations WHERE signer_pubkey = ?",
@@ -335,6 +355,17 @@ impl AttestationStore {
         results.truncate(limit);
         Ok(results)
     }
+}
+
+/// Raw attestation row for local-mode verification.
+#[derive(Debug)]
+pub struct AttestationRow {
+    pub attestation_id: String,
+    pub content: String,
+    pub content_hash: String,
+    pub solana_tx: String,
+    pub arweave_tx: String,
+    pub signer_pubkey: String,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]

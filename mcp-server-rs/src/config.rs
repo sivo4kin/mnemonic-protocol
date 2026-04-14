@@ -16,6 +16,12 @@ pub struct Config {
     /// TurboQuant bit width for compression (2, 3, or 4)
     pub turbo_bits: usize,
 
+    // ── Storage mode ─────────────────────────────────────────────────────────
+    /// "full" (default): Arweave + Solana + SQLite
+    /// "local": SQLite only — no blockchain writes, free, instant, offline.
+    ///          Perfect for testing the MCP flow without paying for on-chain ops.
+    pub storage_mode: String,
+
     // ── Payment ──────────────────────────────────────────────────────────────
     /// Payment mode: "none" | "balance" | "x402" | "both"
     pub payment_mode: String,
@@ -58,6 +64,7 @@ impl Config {
             openai_api_key: env_or("OPENAI_API_KEY", ""),
             openai_embed_model: env_or("OPENAI_EMBED_MODEL", "text-embedding-3-small"),
             turbo_bits: env_or("TURBO_BITS", "4").parse().unwrap_or(4),
+            storage_mode: env_or("STORAGE_MODE", "local"),
             payment_mode: env_or("PAYMENT_MODE", "none"),
             treasury_pubkey: env_or("TREASURY_PUBKEY", ""),
             usdc_mint: env_or("USDC_MINT", "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"),
