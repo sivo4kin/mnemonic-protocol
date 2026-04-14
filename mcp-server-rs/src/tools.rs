@@ -9,6 +9,7 @@ use crate::{
     db::AttestationStore,
     embed::Embedder,
     identity,
+    pricing::CostHint,
     solana::SolanaClient,
 };
 
@@ -34,6 +35,7 @@ pub async fn sign_memory(
     compressor: &EmbeddingCompressor,
     content: &str,
     tags: &[String],
+    cost_hint: &CostHint,
 ) -> anyhow::Result<serde_json::Value> {
     let pubkey = identity::pubkey_base58(keypair);
     let attestation_id = uuid::Uuid::new_v4().to_string();
@@ -72,12 +74,21 @@ pub async fn sign_memory(
     let solana_tx = solana.write_memo(keypair, &memo.to_string()).await?;
 
     // 6. Save locally (full embedding for search, compressed for storage reference)
+    //    and record P&L cost entry in the same lock scope.
     {
         let store = store.lock().unwrap();
         store.save_attestation(
             &attestation_id, content, &content_hash, tags,
             &solana_tx, &arweave_tx, &pubkey, &now, &embedding,
         )?;
+        // Best-effort — don't fail the whole call if cost recording fails.
+        let _ = store.record_attestation_cost(
+            &attestation_id,
+            cost_hint.irys_lamports,
+            cost_hint.sol_tx_fee_lamports,
+            cost_hint.sol_price_usdc,
+            cost_hint.charge_micro_usdc,
+        );
     }
 
     let ratio = compressor.compression_ratio();

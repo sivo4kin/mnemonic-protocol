@@ -49,6 +49,17 @@ CREATE TABLE IF NOT EXISTS x402_nonces (
     tx_sig TEXT PRIMARY KEY,
     used_at TEXT NOT NULL
 );
+
+-- P&L: per-attestation cost accounting
+CREATE TABLE IF NOT EXISTS attestation_costs (
+    attestation_id TEXT PRIMARY KEY,
+    irys_cost_lamports INTEGER NOT NULL,
+    sol_tx_fee_lamports INTEGER NOT NULL,
+    sol_price_usdc REAL NOT NULL,
+    earned_micro_usdc INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (attestation_id) REFERENCES attestations(attestation_id)
+);
 "#;
 
 pub struct AttestationStore {
@@ -184,6 +195,79 @@ impl AttestationStore {
         }
     }
 
+    // ── P&L cost tracking ───────────────────────────────────────────────────
+
+    /// Record actual server costs alongside each completed attestation.
+    pub fn record_attestation_cost(
+        &self,
+        attestation_id: &str,
+        irys_lamports: u64,
+        sol_tx_fee_lamports: u64,
+        sol_price_usdc: f64,
+        earned_micro_usdc: i64,
+    ) -> anyhow::Result<()> {
+        let now = chrono::Utc::now().to_rfc3339();
+        self.conn.execute(
+            "INSERT OR IGNORE INTO attestation_costs
+             (attestation_id, irys_cost_lamports, sol_tx_fee_lamports, sol_price_usdc, earned_micro_usdc, created_at)
+             VALUES (?,?,?,?,?,?)",
+            params![
+                attestation_id,
+                irys_lamports as i64,
+                sol_tx_fee_lamports as i64,
+                sol_price_usdc,
+                earned_micro_usdc,
+                now,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Aggregate P&L statistics over the last `days` days.
+    pub fn get_pnl_stats(&self, days: u64) -> anyhow::Result<PnlStats> {
+        let interval = format!("-{days} days");
+        let row = self.conn.query_row(
+            "SELECT
+                COUNT(*),
+                COALESCE(SUM(earned_micro_usdc), 0),
+                COALESCE(SUM(irys_cost_lamports + sol_tx_fee_lamports), 0),
+                COALESCE(SUM((irys_cost_lamports + sol_tx_fee_lamports) * sol_price_usdc / 1000.0), 0.0),
+                COALESCE(AVG(sol_price_usdc), 0.0)
+             FROM attestation_costs
+             WHERE created_at > datetime('now', ?1)",
+            params![interval],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, f64>(3)?,
+                    row.get::<_, f64>(4)?,
+                ))
+            },
+        )?;
+
+        let (attestations, earned, cost_lamports, cost_usdc_equiv, avg_sol) = row;
+        let cost_micro_usdc = cost_usdc_equiv.ceil() as i64;
+        let net = earned - cost_micro_usdc;
+        let margin_pct = if earned > 0 {
+            (net as f64 / earned as f64) * 100.0
+        } else {
+            0.0
+        };
+
+        Ok(PnlStats {
+            period_days: days,
+            attestations,
+            earned_micro_usdc: earned,
+            cost_sol_lamports: cost_lamports,
+            cost_micro_usdc_equiv: cost_micro_usdc,
+            net_micro_usdc: net,
+            margin_pct,
+            avg_sol_price_usdc: avg_sol,
+        })
+    }
+
     pub fn count(&self, signer: &str) -> anyhow::Result<i64> {
         let count: i64 = self.conn.query_row(
             "SELECT COUNT(*) FROM attestations WHERE signer_pubkey = ?",
@@ -254,6 +338,19 @@ pub struct SearchResult {
     pub arweave_tx: String,
     pub created_at: String,
     pub relevance_score: f32,
+}
+
+/// Aggregated profit-and-loss statistics.
+#[derive(Debug, serde::Serialize)]
+pub struct PnlStats {
+    pub period_days: u64,
+    pub attestations: i64,
+    pub earned_micro_usdc: i64,
+    pub cost_sol_lamports: i64,
+    pub cost_micro_usdc_equiv: i64,
+    pub net_micro_usdc: i64,
+    pub margin_pct: f64,
+    pub avg_sol_price_usdc: f64,
 }
 
 fn random_bytes<const N: usize>() -> [u8; N] {

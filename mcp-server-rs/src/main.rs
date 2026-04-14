@@ -6,6 +6,7 @@ mod embed;
 mod identity;
 mod mcp;
 mod payment;
+mod pricing;
 mod solana;
 mod tools;
 
@@ -69,6 +70,8 @@ async fn mcp_handler(
         && req.params.get("name").and_then(|n| n.as_str()) == Some("mnemonic_sign_memory");
 
     if is_sign_memory && state.payment_mode != "none" {
+        // Use live price from pricing engine (refreshed in background)
+        let current_cost = state.pricing.current_price();
         let gate = payment::check_payment(
             &headers,
             &state.payment_mode,
@@ -76,7 +79,7 @@ async fn mcp_handler(
             &state.solana,
             &state.treasury_pubkey,
             &state.usdc_mint,
-            state.sign_memory_cost_micro_usdc,
+            current_cost,
         )
         .await;
 
@@ -89,7 +92,7 @@ async fn mcp_handler(
                         let store = state.store.lock().unwrap();
                         let _ = store.deduct_balance(
                             &key,
-                            state.sign_memory_cost_micro_usdc,
+                            current_cost,
                             "mnemonic_sign_memory",
                         );
                     }
@@ -213,6 +216,46 @@ async fn deposit(
     }
 }
 
+/// GET /admin/stats?days=<N> — P&L summary for the last N days (default 7).
+async fn admin_stats(
+    State(state): State<Arc<mcp::McpState>>,
+    Query(q): Query<StatsQuery>,
+) -> Response {
+    let days = q.days.unwrap_or(7);
+    let store = state.store.lock().unwrap();
+    match store.get_pnl_stats(days) {
+        Ok(stats) => Json(serde_json::json!({
+            "period_days": stats.period_days,
+            "attestations": stats.attestations,
+            "earned_micro_usdc": stats.earned_micro_usdc,
+            "earned_usdc": stats.earned_micro_usdc as f64 / 1_000_000.0,
+            "cost_sol_lamports": stats.cost_sol_lamports,
+            "cost_micro_usdc_equiv": stats.cost_micro_usdc_equiv,
+            "cost_usdc_equiv": stats.cost_micro_usdc_equiv as f64 / 1_000_000.0,
+            "net_micro_usdc": stats.net_micro_usdc,
+            "net_usdc": stats.net_micro_usdc as f64 / 1_000_000.0,
+            "margin_pct": (stats.margin_pct * 10.0).round() / 10.0,
+            "avg_sol_price_usdc": stats.avg_sol_price_usdc,
+            "pricing": {
+                "current_price_micro_usdc": state.pricing.current_price(),
+                "current_sol_price_usdc": state.pricing.current_sol_price(),
+                "current_irys_lamports": state.pricing.current_irys_lamports(),
+            },
+        }))
+        .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct StatsQuery {
+    days: Option<u64>,
+}
+
 // ── main ──────────────────────────────────────────────────────────────────────
 
 #[tokio::main]
@@ -250,6 +293,39 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!("Payment mode: {}", cfg.payment_mode);
 
+    // ── Pricing engine ────────────────────────────────────────────────────────
+    let pricing_cfg = pricing::PricingConfig {
+        margin_bps: cfg.pricing_margin_bps,
+        min_price_micro_usdc: cfg.sign_memory_cost_micro_usdc,
+        typical_payload_bytes: cfg.typical_payload_bytes,
+        sol_tx_fee_lamports: cfg.sol_tx_fee_lamports,
+    };
+    let pricing = pricing::PricingEngine::new(cfg.sign_memory_cost_micro_usdc);
+
+    // Attempt an initial price fetch (non-fatal — falls back to floor price)
+    if let Err(e) = pricing.refresh(&pricing_cfg).await {
+        tracing::warn!("initial pricing refresh failed (using floor price): {e}");
+    }
+    tracing::info!(
+        price_micro_usdc = pricing.current_price(),
+        sol_usdc = pricing.current_sol_price(),
+        "pricing engine ready"
+    );
+
+    // Spawn background refresh loop
+    {
+        let pricing = pricing.clone();
+        let refresh_secs = cfg.price_refresh_secs;
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(refresh_secs)).await;
+                if let Err(e) = pricing.refresh(&pricing_cfg).await {
+                    tracing::warn!("pricing refresh failed: {e}");
+                }
+            }
+        });
+    }
+
     let store = db::AttestationStore::open(&cfg.database_path)?;
     let state = Arc::new(mcp::McpState {
         keypair,
@@ -262,6 +338,8 @@ async fn main() -> anyhow::Result<()> {
         treasury_pubkey: cfg.treasury_pubkey.clone(),
         usdc_mint: cfg.usdc_mint.clone(),
         sign_memory_cost_micro_usdc: cfg.sign_memory_cost_micro_usdc,
+        pricing,
+        sol_tx_fee_lamports: cfg.sol_tx_fee_lamports,
     });
 
     match transport.as_str() {
@@ -324,6 +402,7 @@ async fn run_http(state: Arc<mcp::McpState>, host: &str, port: u16) -> anyhow::R
         .route("/api-keys", post(create_api_key))
         .route("/balance", get(get_balance))
         .route("/deposit", post(deposit))
+        .route("/admin/stats", get(admin_stats))
         .route("/health", get(|| async { Json(serde_json::json!({"status": "ok"})) }))
         .with_state(state)
         .layer(

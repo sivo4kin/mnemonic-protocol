@@ -4,7 +4,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use solana_sdk::signature::Keypair;
 
-use crate::{arweave::ArweaveClient, compress::EmbeddingCompressor, db::AttestationStore, embed::Embedder, solana::SolanaClient, tools};
+use std::sync::Arc;
+use crate::{arweave::ArweaveClient, compress::EmbeddingCompressor, db::AttestationStore, embed::Embedder, pricing::PricingEngine, solana::SolanaClient, tools};
 
 /// JSON-RPC 2.0 request.
 #[derive(Debug, Deserialize)]
@@ -50,6 +51,11 @@ pub struct McpState {
     pub treasury_pubkey: String,
     pub usdc_mint: String,
     pub sign_memory_cost_micro_usdc: i64,
+
+    // Dynamic pricing
+    pub pricing: Arc<PricingEngine>,
+    /// Solana memo tx fee in lamports (passed to CostHint).
+    pub sol_tx_fee_lamports: u64,
 }
 
 // Safety: We only access store through std::sync::Mutex (short critical sections, no await)
@@ -154,9 +160,12 @@ async fn handle_tool_call(name: &str, args: &Value, state: &McpState) -> Result<
                 .and_then(|t| t.as_array())
                 .map(|a| a.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
                 .unwrap_or_default();
-            // This tool does network I/O then DB — handled inside tools::sign_memory
-            tools::sign_memory(&state.keypair, &state.solana, &state.arweave, &state.store, state.embedder.as_ref(), &state.compressor, &content, &tags)
-                .await.map_err(|e| e.to_string())?
+            let cost_hint = state.pricing.cost_hint(state.sol_tx_fee_lamports);
+            tools::sign_memory(
+                &state.keypair, &state.solana, &state.arweave, &state.store,
+                state.embedder.as_ref(), &state.compressor,
+                &content, &tags, &cost_hint,
+            ).await.map_err(|e| e.to_string())?
         }
         "mnemonic_verify" => {
             let sol = args.get("solana_tx").and_then(|v| v.as_str());

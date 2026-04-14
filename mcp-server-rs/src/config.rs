@@ -23,8 +23,18 @@ pub struct Config {
     pub treasury_pubkey: String,
     /// USDC SPL mint address (mainnet: EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v)
     pub usdc_mint: String,
-    /// Cost of mnemonic_sign_memory in micro-USDC (1 USDC = 1_000_000)
+    /// Minimum / initial cost of mnemonic_sign_memory in micro-USDC (floor price)
     pub sign_memory_cost_micro_usdc: i64,
+
+    // ── Dynamic pricing ───────────────────────────────────────────────────────
+    /// How often to refresh Irys + SOL prices (seconds). Default 1800 (30 min).
+    pub price_refresh_secs: u64,
+    /// Profit margin above break-even in basis points (2000 = 20 %).
+    pub pricing_margin_bps: u64,
+    /// Typical mnemonic_sign_memory payload size used for Irys price quotes (bytes).
+    pub typical_payload_bytes: usize,
+    /// Solana memo tx fee in lamports (~5 000 on mainnet).
+    pub sol_tx_fee_lamports: u64,
 }
 
 impl Config {
@@ -53,6 +63,10 @@ impl Config {
             usdc_mint: env_or("USDC_MINT", "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"),
             sign_memory_cost_micro_usdc: env_or("SIGN_MEMORY_COST_MICRO_USDC", "1000")
                 .parse().unwrap_or(1000),
+            price_refresh_secs: env_or("PRICE_REFRESH_SECS", "1800").parse().unwrap_or(1800),
+            pricing_margin_bps: env_or("PRICING_MARGIN_BPS", "2000").parse().unwrap_or(2000),
+            typical_payload_bytes: env_or("TYPICAL_PAYLOAD_BYTES", "2048").parse().unwrap_or(2048),
+            sol_tx_fee_lamports: env_or("SOL_TX_FEE_LAMPORTS", "5000").parse().unwrap_or(5000),
         }
     }
 }
