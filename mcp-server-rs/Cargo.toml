@@ -90,3 +90,7 @@ proptest = "1"            # Property-based testing for canonicalization
 [[bench]]
 name = "decompress"
 harness = false
+
+[[bench]]
+name = "cbor_codec"
+harness = false
