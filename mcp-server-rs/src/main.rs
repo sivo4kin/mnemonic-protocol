@@ -1,4 +1,5 @@
 mod arweave;
+mod codec;
 mod compress;
 mod config;
 mod db;

@@ -71,6 +71,12 @@ ndarray = "0.16"
 # Local embeddings (ONNX, all-MiniLM-L6-v2) — optional, needs ONNX runtime
 fastembed = { version = "5", optional = true }
 
+# CBOR / COSE / VAA canonical encoding
+ciborium = "0.2"          # Deterministic CBOR (RFC 8949)
+coset = "0.3"             # COSE sign/verify (RFC 9052)
+blake3 = "1"              # Content hashing
+zstd = "0.13"             # Artifact compression
+
 [features]
 default = []
 local-embed = ["fastembed"]
@@ -79,6 +85,7 @@ local-embed = ["fastembed"]
 tokio-test = "0.4"
 tempfile = "3"
 criterion = "0.5"
+proptest = "1"            # Property-based testing for canonicalization
 
 [[bench]]
 name = "decompress"
