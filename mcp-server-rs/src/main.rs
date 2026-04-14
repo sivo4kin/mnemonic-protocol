@@ -219,30 +219,55 @@ async fn deposit(
         }
     };
 
-    // Verify the API key owner matches a signer of the deposit transaction
-    let store = state.store.lock().unwrap();
-    let owner_pubkey = match store.get_owner_pubkey(&body.api_key) {
-        Ok(Some(pk)) if !pk.is_empty() => pk,
-        Ok(_) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({
-                    "error": "api key has no owner_pubkey — cannot verify deposit sender"
-                })),
-            ).into_response()
+    // Look up the API key's owner_pubkey (short lock scope, no await)
+    let owner_pubkey = {
+        let store = state.store.lock().unwrap();
+        match store.get_owner_pubkey(&body.api_key) {
+            Ok(Some(pk)) if !pk.is_empty() => pk,
+            Ok(_) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({
+                        "error": "api key has no owner_pubkey — cannot verify deposit sender"
+                    })),
+                ).into_response()
+            }
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({"error": e.to_string()})),
+                ).into_response()
+            }
         }
+    }; // lock released here
+
+    // Verify that the API key's owner_pubkey is a signer of the deposit transaction.
+    // This prevents front-running: only the wallet that signed the tx can credit the key.
+    let signers = match state.solana.get_tx_signers(&body.tx_sig).await {
+        Ok(s) => s,
         Err(e) => {
             return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": e.to_string()})),
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({"error": format!("failed to fetch tx signers: {e}")})),
             ).into_response()
         }
     };
-    // TODO: verify owner_pubkey is a signer of the tx_sig transaction.
-    // For now, the owner_pubkey binding provides a claim — full on-chain
-    // signer verification requires parsing the tx account keys.
-    let _ = &owner_pubkey;
 
+    if !signers.iter().any(|s| s == &owner_pubkey) {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({
+                "error": format!(
+                    "deposit rejected: API key owner ({}) is not a signer of tx {}. \
+                     Only the wallet that signed the deposit can credit this key.",
+                    &owner_pubkey[..owner_pubkey.len().min(12)],
+                    &body.tx_sig[..body.tx_sig.len().min(16)],
+                ),
+            })),
+        ).into_response();
+    }
+
+    let store = state.store.lock().unwrap();
     match store.credit_deposit(&body.api_key, amount as i64, &body.tx_sig) {
         Ok(new_balance) => Json(serde_json::json!({
             "api_key": body.api_key,

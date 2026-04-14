@@ -9,7 +9,7 @@ description = "Mnemonic MCP server — verifiable memory attestation primitive f
 tokio = { version = "1", features = ["full"] }
 
 # HTTP server (remote MCP transport)
-axum = { version = "0.8", features = ["json"] }
+axum = { version = "0.8", features = ["json", "macros"] }
 axum-extra = { version = "0.10", features = ["typed-header"] }
 tower-http = { version = "0.6", features = ["cors"] }
 

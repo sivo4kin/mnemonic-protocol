@@ -110,6 +110,34 @@ impl SolanaClient {
         self.rpc("getHealth", serde_json::json!([])).await.is_ok()
     }
 
+    /// Extract the signer pubkeys from a confirmed transaction.
+    /// Returns the list of account keys that are marked as signers.
+    pub async fn get_tx_signers(&self, tx_sig: &str) -> anyhow::Result<Vec<String>> {
+        let result = self.rpc("getTransaction", serde_json::json!([
+            tx_sig,
+            {"encoding": "jsonParsed", "commitment": "confirmed", "maxSupportedTransactionVersion": 0}
+        ])).await?;
+
+        if result.is_null() {
+            return Ok(vec![]);
+        }
+
+        let mut signers = vec![];
+
+        // jsonParsed format: message.accountKeys is an array of {pubkey, signer, writable, source}
+        if let Some(account_keys) = result["transaction"]["message"]["accountKeys"].as_array() {
+            for key in account_keys {
+                if key["signer"].as_bool() == Some(true) {
+                    if let Some(pk) = key["pubkey"].as_str() {
+                        signers.push(pk.to_string());
+                    }
+                }
+            }
+        }
+
+        Ok(signers)
+    }
+
     /// Verify that `tx_sig` transfers at least `min_amount` micro-USDC of `usdc_mint`
     /// to `recipient`.  Returns the actual amount transferred (>= min_amount) on
     /// success, or `Ok(None)` if the transfer is absent / insufficient.
