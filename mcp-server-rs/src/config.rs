@@ -60,7 +60,7 @@ impl Config {
                 "DATABASE_PATH",
                 &format!("{}/.mnemonic/attestations.db", home),
             )),
-            embed_provider: env_or("EMBED_PROVIDER", "hash"),
+            embed_provider: env_or("EMBED_PROVIDER", "fastembed"),
             openai_api_key: env_or("OPENAI_API_KEY", ""),
             openai_embed_model: env_or("OPENAI_EMBED_MODEL", "text-embedding-3-small"),
             turbo_bits: env_or("TURBO_BITS", "4").parse().unwrap_or(4),

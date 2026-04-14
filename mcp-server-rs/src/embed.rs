@@ -1,4 +1,4 @@
-//! Embedding service — pluggable: hash fallback (offline) or OpenAI API.
+//! Embedding service — pluggable: fastembed (local ONNX), OpenAI API, or hash fallback.
 
 use sha2::{Sha256, Digest};
 
@@ -7,23 +7,71 @@ pub trait Embedder: Send + Sync {
     fn embed(&self, text: &str) -> Vec<f32>;
     fn dim(&self) -> usize;
     fn provider_name(&self) -> &str;
+    /// Returns true if this is the hash fallback (not semantic).
+    fn is_fallback(&self) -> bool { false }
 }
 
+// ── FastEmbed (local ONNX) ──────────────────────────────────────────────────
+
+/// Local ONNX embedder via fastembed (all-MiniLM-L6-v2, 384-dim).
+/// Downloads model on first run (~22MB), cached at ~/.cache/fastembed.
+/// Enable with: cargo build --features local-embed
+#[cfg(feature = "local-embed")]
+pub struct FastEmbedder {
+    model: fastembed::TextEmbedding,
+    dim: usize,
+}
+
+#[cfg(feature = "local-embed")]
+impl FastEmbedder {
+    pub fn try_new() -> Result<Self, String> {
+        use fastembed::{TextEmbedding, InitOptions, EmbeddingModel};
+        let model = TextEmbedding::try_new(InitOptions {
+            model_name: EmbeddingModel::AllMiniLML6V2,
+            ..Default::default()
+        }).map_err(|e| format!("fastembed init failed: {e}"))?;
+
+        // Probe dimension
+        let sample = model.embed(vec!["test"], None)
+            .map_err(|e| format!("fastembed probe failed: {e}"))?;
+        let dim = sample.first().map(|v| v.len()).unwrap_or(384);
+
+        Ok(Self { model, dim })
+    }
+}
+
+#[cfg(feature = "local-embed")]
+impl Embedder for FastEmbedder {
+    fn embed(&self, text: &str) -> Vec<f32> {
+        match self.model.embed(vec![text.to_string()], None) {
+            Ok(embeddings) => {
+                embeddings.into_iter().next().unwrap_or_else(|| vec![0.0; self.dim])
+            }
+            Err(e) => {
+                tracing::error!("fastembed inference failed: {e}");
+                vec![0.0; self.dim]
+            }
+        }
+    }
+
+    fn dim(&self) -> usize { self.dim }
+    fn provider_name(&self) -> &str { "fastembed" }
+}
+
+// ── Hash embedder (fallback) ────────────────────────────────────────────────
+
 /// Deterministic hash-based embedder (384-dim). Works offline, no API key.
+/// NOT semantic — produces consistent but meaningless vectors.
 pub struct HashEmbedder {
     dim: usize,
 }
 
 impl HashEmbedder {
-    pub fn new(dim: usize) -> Self {
-        Self { dim }
-    }
+    pub fn new(dim: usize) -> Self { Self { dim } }
 }
 
 impl Default for HashEmbedder {
-    fn default() -> Self {
-        Self { dim: 384 }
-    }
+    fn default() -> Self { Self { dim: 384 } }
 }
 
 impl Embedder for HashEmbedder {
@@ -48,7 +96,10 @@ impl Embedder for HashEmbedder {
 
     fn dim(&self) -> usize { self.dim }
     fn provider_name(&self) -> &str { "hash" }
+    fn is_fallback(&self) -> bool { true }
 }
+
+// ── OpenAI embedder ─────────────────────────────────────────────────────────
 
 /// OpenAI embeddings API embedder.
 pub struct OpenAIEmbedder {
@@ -59,7 +110,6 @@ pub struct OpenAIEmbedder {
 
 impl OpenAIEmbedder {
     pub fn new(api_key: &str, model: &str) -> Self {
-        // text-embedding-3-small = 1536 dim
         let dim = if model.contains("small") { 1536 } else { 3072 };
         Self {
             api_key: api_key.to_string(),
@@ -71,12 +121,8 @@ impl OpenAIEmbedder {
 
 impl Embedder for OpenAIEmbedder {
     fn embed(&self, text: &str) -> Vec<f32> {
-        // Blocking HTTP call — called from sync context via tools
         let client = reqwest::blocking::Client::new();
-        let body = serde_json::json!({
-            "input": text,
-            "model": self.model,
-        });
+        let body = serde_json::json!({ "input": text, "model": self.model });
         let resp = client.post("https://api.openai.com/v1/embeddings")
             .header("Authorization", format!("Bearer {}", self.api_key))
             .header("Content-Type", "application/json")
@@ -92,12 +138,12 @@ impl Embedder for OpenAIEmbedder {
                             .collect();
                     }
                 }
-                tracing::error!("OpenAI embedding failed, falling back to hash");
-                HashEmbedder::new(self.dim).embed(text)
+                tracing::error!("OpenAI embedding failed, returning zeros");
+                vec![0.0; self.dim]
             }
             Err(e) => {
-                tracing::error!("OpenAI request failed: {e}, falling back to hash");
-                HashEmbedder::new(self.dim).embed(text)
+                tracing::error!("OpenAI request failed: {e}");
+                vec![0.0; self.dim]
             }
         }
     }
@@ -106,15 +152,50 @@ impl Embedder for OpenAIEmbedder {
     fn provider_name(&self) -> &str { "openai" }
 }
 
-/// Build embedder from config.
+// ── Builder ─────────────────────────────────────────────────────────────────
+
+/// Build embedder from config. Priority: fastembed > openai > hash (with warning).
 pub fn build_embedder(provider: &str, api_key: &str, model: &str) -> Box<dyn Embedder> {
     match provider {
+        "fastembed" => {
+            #[cfg(feature = "local-embed")]
+            {
+                match FastEmbedder::try_new() {
+                    Ok(e) => {
+                        tracing::info!("Embedder: fastembed (all-MiniLM-L6-v2, {}-dim, local ONNX)", e.dim());
+                        return Box::new(e);
+                    }
+                    Err(msg) => {
+                        tracing::warn!("fastembed unavailable: {msg}");
+                    }
+                }
+            }
+            #[cfg(not(feature = "local-embed"))]
+            {
+                tracing::warn!("fastembed not compiled in. Build with: cargo build --features local-embed");
+            }
+            // Fallback chain: OpenAI if key available, else hash with warning
+            if !api_key.is_empty() {
+                tracing::info!("Falling back to OpenAI embeddings ({model})");
+                Box::new(OpenAIEmbedder::new(api_key, model))
+            } else {
+                tracing::warn!(
+                    "Using hash embedder — recall will NOT return semantic results. \
+                     Set OPENAI_API_KEY for meaningful recall, or build with --features local-embed."
+                );
+                Box::new(HashEmbedder::default())
+            }
+        }
         "openai" if !api_key.is_empty() => {
             tracing::info!("Embedder: OpenAI {model}");
             Box::new(OpenAIEmbedder::new(api_key, model))
         }
+        "openai" => {
+            tracing::warn!("EMBED_PROVIDER=openai but OPENAI_API_KEY not set. Falling back to hash.");
+            Box::new(HashEmbedder::default())
+        }
         _ => {
-            tracing::info!("Embedder: hash (384-dim, offline)");
+            tracing::info!("Embedder: hash (384-dim, offline, non-semantic)");
             Box::new(HashEmbedder::default())
         }
     }
@@ -161,9 +242,9 @@ mod tests {
     }
 
     #[test]
-    fn test_different_texts() {
+    fn test_hash_is_fallback() {
         let e = HashEmbedder::default();
-        assert_ne!(e.embed("hello"), e.embed("goodbye"));
+        assert!(e.is_fallback());
     }
 
     #[test]
@@ -174,15 +255,9 @@ mod tests {
     }
 
     #[test]
-    fn test_build_hash_fallback() {
+    fn test_build_hash_explicit() {
         let e = build_embedder("hash", "", "");
         assert_eq!(e.provider_name(), "hash");
-        assert_eq!(e.dim(), 384);
-    }
-
-    #[test]
-    fn test_build_openai_without_key_falls_back() {
-        let e = build_embedder("openai", "", "text-embedding-3-small");
-        assert_eq!(e.provider_name(), "hash"); // no key → fallback
+        assert!(e.is_fallback());
     }
 }

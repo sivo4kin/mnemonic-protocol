@@ -68,6 +68,13 @@ futures = "0.3"
 turboquant = { git = "https://github.com/sivo4kin/turboquant-rs.git", branch = "master" }
 ndarray = "0.16"
 
+# Local embeddings (ONNX, all-MiniLM-L6-v2) — optional, needs ONNX runtime
+fastembed = { version = "5", optional = true }
+
+[features]
+default = []
+local-embed = ["fastembed"]
+
 [dev-dependencies]
 tokio-test = "0.4"
 tempfile = "3"

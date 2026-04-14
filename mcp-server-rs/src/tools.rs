@@ -256,10 +256,17 @@ pub fn recall(
     let query_emb = embedder.embed(query);
     let results = store.search(&query_emb, &pubkey, limit).unwrap_or_default();
     let total = store.count(&pubkey).unwrap_or(0);
-    serde_json::json!({
+    let mut response = serde_json::json!({
         "query": query,
         "results": results,
         "total_attestations": total,
         "embed_provider": embedder.provider_name(),
-    })
+    });
+    if embedder.is_fallback() {
+        response["embed_warning"] = serde_json::json!(
+            "Hash embedder active \u{2014} recall results are NOT semantic. \
+             Set OPENAI_API_KEY or ensure internet for fastembed model download."
+        );
+    }
+    response
 }
