@@ -9,3 +9,4 @@
 pub mod schema;
 pub mod canonical;
 pub mod hash;
+pub mod sign;
