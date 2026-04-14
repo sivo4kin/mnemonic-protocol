@@ -93,6 +93,7 @@ pub async fn sign_memory(
         .map_err(|e| anyhow::anyhow!("COSE signing failed: {e}"))?;
 
     let content_hash = signed.content_hash.clone();
+    let embed_model = embedder.model_id().to_string();
 
     // 5. Store on-chain (or locally)
     let (solana_tx, arweave_tx) = if storage_mode == "local" {
@@ -104,8 +105,13 @@ pub async fn sign_memory(
         let ar_tx = arweave.write_bytes(&signed.cose_bytes, keypair).await?;
         arweave.mine().await?;
 
-        // Solana: anchor blake3 hash (v2 format)
-        let memo = serde_json::json!({"h": content_hash, "a": ar_tx, "v": 2});
+        // Solana: anchor blake3 hash + embedding model (v3 format)
+        let memo = serde_json::json!({
+            "h": content_hash,
+            "a": ar_tx,
+            "m": embed_model,
+            "v": 3,
+        });
         let sol_tx = solana.write_memo(keypair, &memo.to_string()).await?;
         (sol_tx, ar_tx)
     };
@@ -140,8 +146,12 @@ pub async fn sign_memory(
         "did_sol": identity::did_sol(keypair),
         "timestamp": now,
         "storage_mode": storage_mode,
-        "embed_provider": embedder.provider_name(),
-        "embed_dim": embedder.dim(),
+        "embedding": {
+            "model": embed_model,
+            "provider": embedder.provider_name(),
+            "dim": embedder.dim(),
+            "verifiable": embedder.is_open_weights(),
+        },
         "compression": {
             "algorithm": "TurboQuant",
             "bits": compressed.bit_width,
@@ -335,17 +345,12 @@ pub fn recall(
     let query_emb = embedder.embed(query);
     let results = store.search(&query_emb, &pubkey, limit).unwrap_or_default();
     let total = store.count(&pubkey).unwrap_or(0);
-    let mut response = serde_json::json!({
+    serde_json::json!({
         "query": query,
         "results": results,
         "total_attestations": total,
         "embed_provider": embedder.provider_name(),
-    });
-    if embedder.is_fallback() {
-        response["embed_warning"] = serde_json::json!(
-            "Hash embedder active \u{2014} recall results are NOT semantic. \
-             Set OPENAI_API_KEY or ensure internet for fastembed model download."
-        );
-    }
-    response
+        "embed_model": embedder.model_id(),
+        "verifiable": embedder.is_open_weights(),
+    })
 }
