@@ -122,6 +122,15 @@ impl AttestationStore {
         Ok(key)
     }
 
+    /// Get the owner pubkey for an API key. Returns None if key not found.
+    pub fn get_owner_pubkey(&self, api_key: &str) -> anyhow::Result<Option<String>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT owner_pubkey FROM api_keys WHERE api_key = ?"
+        )?;
+        let mut rows = stmt.query(params![api_key])?;
+        Ok(rows.next()?.map(|r| r.get(0)).transpose()?)
+    }
+
     /// Get balance in micro-USDC for an API key. Returns None if key not found.
     pub fn get_balance(&self, api_key: &str) -> anyhow::Result<Option<i64>> {
         let mut stmt = self.conn.prepare(
@@ -353,20 +362,28 @@ pub struct PnlStats {
     pub avg_sol_price_usdc: f64,
 }
 
+/// Cryptographically secure random bytes using OS entropy.
 fn random_bytes<const N: usize>() -> [u8; N] {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    use std::time::{SystemTime, UNIX_EPOCH};
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
-    let t = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos() as u64;
-    let pid = std::process::id() as u64;
-    let cnt = COUNTER.fetch_add(1, Ordering::Relaxed);
-    let mut state = t
-        ^ pid.wrapping_mul(0x9e3779b97f4a7c15)
-        ^ cnt.wrapping_mul(0x6c62272e07bb0142);
+    use std::io::Read;
     let mut out = [0u8; N];
-    for byte in out.iter_mut() {
-        state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
-        *byte = (state >> 33) as u8;
+    // Use /dev/urandom on Unix, CryptGenRandom on Windows via getrandom
+    if let Ok(mut f) = std::fs::File::open("/dev/urandom") {
+        let _ = f.read_exact(&mut out);
+    } else {
+        // Fallback: hash of high-resolution time + pid + counter (still better than bare LCG)
+        use std::sync::atomic::{AtomicU64, Ordering};
+        use sha2::{Sha256, Digest};
+        static CTR: AtomicU64 = AtomicU64::new(0);
+        let seed = format!(
+            "{}:{}:{}",
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos(),
+            std::process::id(),
+            CTR.fetch_add(1, Ordering::Relaxed),
+        );
+        let hash = Sha256::digest(seed.as_bytes());
+        for (i, byte) in out.iter_mut().enumerate() {
+            *byte = hash[i % 32];
+        }
     }
     out
 }

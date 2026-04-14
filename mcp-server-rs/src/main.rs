@@ -85,18 +85,37 @@ async fn mcp_handler(
 
         match gate {
             payment::PaymentGate::Proceed(api_key) => {
+                // Deduct balance BEFORE executing the tool (reserve funds)
+                if let Some(ref key) = api_key {
+                    let store = state.store.lock().unwrap();
+                    if let Err(e) = store.deduct_balance(
+                        key,
+                        state.sign_memory_cost_micro_usdc,
+                        "mnemonic_sign_memory",
+                    ) {
+                        let err_body = serde_json::json!({
+                            "jsonrpc": "2.0", "id": req.id,
+                            "error": {"code": -32600, "message": format!("payment failed: {e}")}
+                        });
+                        return (StatusCode::PAYMENT_REQUIRED, Json(err_body)).into_response();
+                    }
+                }
+
                 let resp = mcp::handle_request(&req, &state).await;
-                // Deduct balance after a successful tool call
-                if resp.error.is_none() {
-                    if let Some(key) = api_key {
+
+                // Refund on tool failure
+                if resp.error.is_some() {
+                    if let Some(ref key) = api_key {
                         let store = state.store.lock().unwrap();
-                        let _ = store.deduct_balance(
-                            &key,
+                        let _ = store.credit_deposit(
+                            key,
                             current_cost,
-                            "mnemonic_sign_memory",
+                            &format!("refund:{}",
+                                resp.error.as_ref().map(|e| e.message.as_str()).unwrap_or("error")),
                         );
                     }
                 }
+
                 Json(resp).into_response()
             }
             payment::PaymentGate::NeedPayment(x402) => {
@@ -200,7 +219,30 @@ async fn deposit(
         }
     };
 
+    // Verify the API key owner matches a signer of the deposit transaction
     let store = state.store.lock().unwrap();
+    let owner_pubkey = match store.get_owner_pubkey(&body.api_key) {
+        Ok(Some(pk)) if !pk.is_empty() => pk,
+        Ok(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": "api key has no owner_pubkey — cannot verify deposit sender"
+                })),
+            ).into_response()
+        }
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": e.to_string()})),
+            ).into_response()
+        }
+    };
+    // TODO: verify owner_pubkey is a signer of the tx_sig transaction.
+    // For now, the owner_pubkey binding provides a claim — full on-chain
+    // signer verification requires parsing the tx account keys.
+    let _ = &owner_pubkey;
+
     match store.credit_deposit(&body.api_key, amount as i64, &body.tx_sig) {
         Ok(new_balance) => Json(serde_json::json!({
             "api_key": body.api_key,

@@ -123,7 +123,12 @@ pub async fn check_payment(
             check_x402(headers, solana, store, treasury, usdc_mint, cost).await
         }
 
-        _ => PaymentGate::Proceed(None),
+        unknown => {
+            tracing::error!("Unknown PAYMENT_MODE={unknown:?} — rejecting request (fail-closed)");
+            PaymentGate::Unauthorized(format!(
+                "server misconfiguration: unknown PAYMENT_MODE={unknown:?}. Valid: none, balance, x402, both"
+            ))
+        }
     }
 }
 
