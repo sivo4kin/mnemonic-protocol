@@ -1,21 +1,17 @@
 # Mnemonic — Implementation Status and Scope Map
 
 **Date:** 2026-04-15  
-**Purpose:** Prevent confusion between the legacy prototype / research architecture and the current Rust MCP implementation.
+**Purpose:** Prevent confusion between the historical research/prototype lineage and the current Rust MCP implementation.
 
 ---
 
 ## Executive summary
 
-This repository currently contains **two different but related tracks**:
+The canonical implementation on `main` is the Rust MCP server in:
 
-1. **Legacy prototype / research track**
-   - now represented by `legacy/` and older top-level design documents
-   - focused on compressed shadow-index retrieval, snapshot/restore, encryption, and research validation
+- `mcp/`
 
-2. **Current active implementation track**
-   - represented by `mcp/` on `main`
-   - focused on an MCP server with CBOR/COSE artifacts, blake3 hashing, SQLite recall, optional Arweave/Solana persistence, and payment-aware HTTP serving
+At the same time, the repository still contains historical research and design lineage material.
 
 These tracks share the same broader Mnemonic thesis, but they are **not the same implementation**.
 
@@ -52,48 +48,44 @@ Current implementation docs:
 
 ---
 
-## What is legacy / research / prototype lineage
+## What counts as historical / research lineage
 
-The older prototype and research architecture describes a different design center:
+Historical or research-oriented material includes:
 
-- compressed shadow index
-- 2-stage retrieval cascade
-- snapshot/restore portability flow
-- encryption-before-hash snapshot commitment
-- Python-centric prototype modules and benchmarks
+- ADR history and design rationale
+- research notes and analyses
+- legacy directory snapshots
+- the archived `legacy` branch
 
-That material is still valuable as:
+These are useful for:
 
 - research context
 - design lineage
 - roadmap / thesis material
-- explanation of why Mnemonic exists
+- explaining why Mnemonic exists
 
-But it should not be read as an exact description of the current `mcp/` implementation unless explicitly stated.
+But they should not be read as exact descriptions of the current `mcp/` implementation unless explicitly stated.
 
-Legacy/research-heavy docs include:
+Historical/research-heavy sources include:
 
-- `docs/WHITEPAPER.md`
-- `docs/ARCHITECTURE.md`
-- `docs/PROJECT_STATE.md`
-- `docs/BLOCKERS.md`
-- `docs/adr/ADR.md` (many entries describe the prototype and pre-MCP evolution)
+- `docs/adr/ADR.md`
 - `docs/research/*`
 - `legacy/`
+- Git branch: `legacy`
 
 ---
 
-## Key differences
+## Key differences to keep in mind
 
-| Topic | Legacy / prototype docs | Current MCP implementation |
-|------|--------------------------|----------------------------|
-| Implementation center | Python prototype / research stack | `mcp/` Rust server |
-| Hashing | Often described as SHA3-256 snapshot commitment | blake3 for current artifacts; legacy SHA-256 verification fallback |
-| Artifact format | Snapshot / JSON-centric | canonical CBOR + COSE_Sign1 |
-| Retrieval | compressed candidate generation + exact rerank | full-embedding SQLite recall |
-| Compression role | core retrieval architecture | artifact-side compression exists, but not current local retrieval index path |
-| Encryption | described in prototype architecture | not currently implemented in active MCP path |
-| Storage model | snapshot/restore + on-chain commit | `local` or `full` runtime storage modes |
+| Topic | Historical / prototype lineage | Current MCP implementation |
+|------|---------------------------------|----------------------------|
+| Implementation center | prototype / research stacks | `mcp/` Rust server |
+| Hashing | older snapshot-hash designs appear in history | blake3 for current artifacts; legacy SHA-256 verification fallback |
+| Artifact format | earlier snapshot / JSON-centric thinking | canonical CBOR + COSE_Sign1 |
+| Retrieval | historical compressed-cascade emphasis | full-embedding SQLite recall |
+| Compression role | often central to retrieval architecture | artifact-side compression exists, but not current local retrieval index path |
+| Encryption | discussed in historical designs | not currently implemented in active MCP path |
+| Storage model | historical snapshot/commit approaches | `local` or `full` runtime storage modes |
 
 ---
 
@@ -107,14 +99,13 @@ Read these first:
 3. `docs/versions/v0.0.3/API.md`
 4. `docs/IMPLEMENTATION_AUDIT.md`
 
-### If you want research thesis / product lineage
+### If you want historical thesis / product lineage
 Read these after:
 
-1. `docs/WHITEPAPER.md`
-2. `docs/ARCHITECTURE.md`
-3. `docs/PROJECT_STATE.md`
-4. `docs/research/*`
-5. `docs/adr/ADR.md`
+1. `docs/adr/ADR.md`
+2. `docs/research/*`
+3. `legacy/`
+4. Git branch `legacy`
 
 ---
 
@@ -123,21 +114,6 @@ Read these after:
 When docs disagree:
 
 - **current implementation behavior** → trust `mcp/` + `docs/versions/v0.0.3/*`
-- **research/design intent** → trust whitepaper / architecture / ADR / research docs
+- **historical/design intent** → trust ADR/research/legacy materials
 
-If a top-level doc discusses the prototype architecture, it should be treated as:
-
-> design lineage and research context, not necessarily the current code path
-
----
-
-## Recommended next cleanup direction
-
-The repository should gradually converge on this split:
-
-- **current implementation docs**
-  - MCP/API/SPEC/README under versioned implementation docs
-- **research and legacy docs**
-  - clearly labeled as prototype / design lineage / future roadmap
-
-That keeps the historical work valuable without implying it is identical to the current Rust MCP server.
+That split is now intentional and explicit.

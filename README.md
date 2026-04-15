@@ -2,12 +2,7 @@
 
 Mnemonic is a verifiable memory / artifact infrastructure project for AI agents.
 
-This repository currently contains both:
-
-1. the **active Rust MCP implementation** on `main`, and
-2. older **research / prototype / design-lineage** material.
-
-To avoid split-brain interpretation, treat the current implementation docs as canonical.
+The canonical implementation on `main` is the Rust MCP server.
 
 ---
 
@@ -24,7 +19,7 @@ If you want to know what the code does **today**, start here:
 
 ### Current implementation summary
 
-The active implementation is the Rust MCP server in:
+The active implementation is in:
 
 - `mcp/`
 
@@ -41,24 +36,21 @@ Current implementation characteristics:
 
 ---
 
-## Research / legacy / prototype lineage
+## Historical / research lineage
 
-Older prototype and research documents are still kept because they explain:
+Older prototype and research material is still relevant for background and design rationale, but it is **not** the canonical description of the current `mcp/` implementation.
 
-- the compression/retrieval thesis
-- snapshot/restore portability ideas
-- encrypted snapshot commitment lineage
-- benchmark and roadmap context
+On `main`, that material is now represented mainly by:
 
-Those docs are now grouped under:
+- `docs/research/*`
+- `docs/adr/ADR.md`
+- `legacy/` directory snapshots
 
-- `docs/legacy/`
-- `docs/research/`
-- `docs/adr/`
+The dedicated archived-doc split was preserved on the separate Git branch:
 
-Important:
+- `legacy`
 
-> These materials are valuable context, but they are **not** the canonical description of the current `mcp/` implementation unless explicitly stated.
+If you need the older whitepaper/prototype doc set intact, use the `legacy` branch.
 
 ---
 
@@ -74,14 +66,11 @@ Important:
 ### Current code
 - `mcp/`
 
-### Legacy / research lineage
-- `docs/legacy/WHITEPAPER.full.md`
-- `docs/legacy/ARCHITECTURE.full.md`
-- `docs/legacy/PROJECT_STATE.full.md`
-- `docs/legacy/BLOCKERS.full.md`
+### Historical / research context
 - `docs/research/*`
 - `docs/adr/ADR.md`
 - `legacy/`
+- Git branch: `legacy`
 
 ---
 
@@ -90,17 +79,6 @@ Important:
 When docs disagree:
 
 - **implementation truth** = `mcp/` + `docs/versions/v0.0.3/*`
-- **research / legacy truth** = `docs/legacy/*`, `docs/research/*`, `docs/adr/*`
+- **historical / research truth** = `docs/research/*`, `docs/adr/*`, `legacy/`, and the `legacy` branch
 
-That split is intentional and explicit.
-
----
-
-## Current goal
-
-The repository is being cleaned up so that:
-
-- current implementation docs are easy to find and trust
-- research / prototype lineage remains available without pretending to be the current code path
-
-That is the policy going forward.
+That split is now intentional and explicit.

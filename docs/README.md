@@ -1,11 +1,8 @@
 # Documentation Map
 
-This repository contains both:
+Use this page as the entry point.
 
-1. the **current active implementation** of Mnemonic, and
-2. older **research / prototype / legacy design lineage** docs.
-
-To avoid split-brain reading, use this page as the entry point.
+The canonical implementation on `main` is the Rust MCP server.
 
 ---
 
@@ -23,7 +20,7 @@ If you want to know what the code on `main` does today, read these first:
 
 The active implementation is the Rust MCP server in:
 
-- `mcp/`
+- `../mcp/`
 
 Current implementation characteristics:
 
@@ -36,25 +33,19 @@ Current implementation characteristics:
 
 ---
 
-## 2. Research / legacy / prototype lineage
+## 2. Historical / research lineage
 
-These docs describe the older prototype and broader design thesis:
+Historical and research material is still useful, but it is not the canonical description of current `mcp/` behavior.
 
-- `legacy/WHITEPAPER.md`
-- `legacy/ARCHITECTURE.md`
-- `legacy/PROJECT_STATE.md`
-- `legacy/BLOCKERS.md`
+On `main`, use these for background:
+
 - `adr/ADR.md`
 - `research/*`
+- `../legacy/`
 
-Use them for:
+If you want the archived prototype-heavy docs set, use the Git branch:
 
-- research context
-- design rationale
-- roadmap lineage
-- historical prototype architecture
-
-Do **not** assume they are exact descriptions of the current `mcp/` code unless they explicitly say so.
+- `legacy`
 
 ---
 
@@ -67,11 +58,10 @@ Do **not** assume they are exact descriptions of the current `mcp/` code unless 
 4. `IMPLEMENTATION_AUDIT.md`
 5. `IMPLEMENTATION_STATUS.md`
 
-### For research/product framing
-1. `legacy/WHITEPAPER.md`
-2. `legacy/ARCHITECTURE.md`
-3. `adr/ADR.md`
-4. `research/*`
+### For historical/product framing
+1. `adr/ADR.md`
+2. `research/*`
+3. Git branch `legacy`
 
 ---
 
@@ -80,6 +70,6 @@ Do **not** assume they are exact descriptions of the current `mcp/` code unless 
 When docs disagree:
 
 - **implementation truth** = `mcp/` + `docs/versions/v0.0.3/*`
-- **research / roadmap truth** = `docs/legacy/*`, `docs/adr/*`, `docs/research/*`
+- **historical / roadmap truth** = `docs/research/*`, `docs/adr/*`, `legacy/`, and the `legacy` branch
 
-That split is intentional and should remain explicit.
+That split is intentional and explicit.
