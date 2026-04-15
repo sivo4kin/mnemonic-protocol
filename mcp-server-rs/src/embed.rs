@@ -7,8 +7,12 @@ pub trait Embedder: Send + Sync {
     fn embed(&self, text: &str) -> Vec<f32>;
     fn dim(&self) -> usize;
     fn provider_name(&self) -> &str;
-    /// Returns true if this is the hash fallback (not semantic).
-    fn is_fallback(&self) -> bool { false }
+    /// Canonical model identifier stored in on-chain anchor.
+    /// Third parties use this to re-embed and verify.
+    fn model_id(&self) -> &str;
+    /// True if the model weights are publicly available (open source).
+    /// Only open-weight models produce externally verifiable attestations.
+    fn is_open_weights(&self) -> bool { false }
 }
 
 // ── FastEmbed (local ONNX) ──────────────────────────────────────────────────
@@ -56,6 +60,9 @@ impl Embedder for FastEmbedder {
 
     fn dim(&self) -> usize { self.dim }
     fn provider_name(&self) -> &str { "fastembed" }
+    fn model_id(&self) -> &str { "all-MiniLM-L6-v2" }
+    // TODO: upgrade to nomic-embed-text-v1.5 as canonical embedder at scale (ADR-017)
+    fn is_open_weights(&self) -> bool { true } // Apache 2.0
 }
 
 // ── Hash embedder (fallback) ────────────────────────────────────────────────
@@ -96,7 +103,8 @@ impl Embedder for HashEmbedder {
 
     fn dim(&self) -> usize { self.dim }
     fn provider_name(&self) -> &str { "hash" }
-    fn is_fallback(&self) -> bool { true }
+    fn model_id(&self) -> &str { "hash-deterministic-384" }
+    // Hash embedder is NOT verifiable — kept only for unit tests
 }
 
 // ── OpenAI embedder ─────────────────────────────────────────────────────────
@@ -150,20 +158,31 @@ impl Embedder for OpenAIEmbedder {
 
     fn dim(&self) -> usize { self.dim }
     fn provider_name(&self) -> &str { "openai" }
+    fn model_id(&self) -> &str { &self.model }
+    // OpenAI models are proprietary — attestations are NOT externally verifiable
+    // Third parties cannot re-embed without the same API key
 }
 
 // ── Builder ─────────────────────────────────────────────────────────────────
 
-/// Build embedder from config. Priority: fastembed > openai > hash (with warning).
-pub fn build_embedder(provider: &str, api_key: &str, model: &str) -> Box<dyn Embedder> {
+/// Build embedder from config.
+///
+/// Returns Ok(embedder) or Err with a message if no real embedder is available.
+/// Hash embedder is NOT available as a production option — recall would be useless.
+///
+/// Priority: fastembed (open, verifiable) > openai (proprietary but semantic)
+pub fn build_embedder(provider: &str, api_key: &str, model: &str) -> Result<Box<dyn Embedder>, String> {
     match provider {
         "fastembed" => {
             #[cfg(feature = "local-embed")]
             {
                 match FastEmbedder::try_new() {
                     Ok(e) => {
-                        tracing::info!("Embedder: fastembed (all-MiniLM-L6-v2, {}-dim, local ONNX)", e.dim());
-                        return Box::new(e);
+                        tracing::info!(
+                            "Embedder: fastembed ({}, {}-dim, open weights, verifiable)",
+                            e.model_id(), e.dim()
+                        );
+                        return Ok(Box::new(e));
                     }
                     Err(msg) => {
                         tracing::warn!("fastembed unavailable: {msg}");
@@ -174,31 +193,36 @@ pub fn build_embedder(provider: &str, api_key: &str, model: &str) -> Box<dyn Emb
             {
                 tracing::warn!("fastembed not compiled in. Build with: cargo build --features local-embed");
             }
-            // Fallback chain: OpenAI if key available, else hash with warning
+            // Fallback to OpenAI if key available
             if !api_key.is_empty() {
-                tracing::info!("Falling back to OpenAI embeddings ({model})");
-                Box::new(OpenAIEmbedder::new(api_key, model))
+                tracing::info!("Falling back to OpenAI embeddings ({model}) — NOT externally verifiable");
+                Ok(Box::new(OpenAIEmbedder::new(api_key, model)))
             } else {
-                tracing::warn!(
-                    "Using hash embedder — recall will NOT return semantic results. \
-                     Set OPENAI_API_KEY for meaningful recall, or build with --features local-embed."
-                );
-                Box::new(HashEmbedder::default())
+                Err(
+                    "No embedding provider available. Configure one of:\n  \
+                     1. Build with: cargo build --features local-embed  (recommended, open weights)\n  \
+                     2. Set OPENAI_API_KEY in .env  (proprietary, not externally verifiable)\n\n\
+                     The hash embedder has been removed — recall requires real semantic embeddings.".to_string()
+                )
             }
         }
         "openai" if !api_key.is_empty() => {
-            tracing::info!("Embedder: OpenAI {model}");
-            Box::new(OpenAIEmbedder::new(api_key, model))
+            tracing::info!("Embedder: OpenAI {model} — NOT externally verifiable (proprietary model)");
+            Ok(Box::new(OpenAIEmbedder::new(api_key, model)))
         }
         "openai" => {
-            tracing::warn!("EMBED_PROVIDER=openai but OPENAI_API_KEY not set. Falling back to hash.");
-            Box::new(HashEmbedder::default())
+            Err("EMBED_PROVIDER=openai but OPENAI_API_KEY not set.".to_string())
         }
-        _ => {
-            tracing::info!("Embedder: hash (384-dim, offline, non-semantic)");
-            Box::new(HashEmbedder::default())
+        other => {
+            Err(format!("Unknown EMBED_PROVIDER={other}. Valid: fastembed, openai"))
         }
     }
+}
+
+/// Build embedder for tests only — hash embedder allowed.
+#[cfg(test)]
+pub fn build_test_embedder() -> Box<dyn Embedder> {
+    Box::new(HashEmbedder::default())
 }
 
 /// Cosine similarity between two vectors.
@@ -242,9 +266,10 @@ mod tests {
     }
 
     #[test]
-    fn test_hash_is_fallback() {
+    fn test_hash_model_id() {
         let e = HashEmbedder::default();
-        assert!(e.is_fallback());
+        assert_eq!(e.model_id(), "hash-deterministic-384");
+        assert!(!e.is_open_weights()); // hash is not verifiable
     }
 
     #[test]
@@ -255,9 +280,22 @@ mod tests {
     }
 
     #[test]
-    fn test_build_hash_explicit() {
-        let e = build_embedder("hash", "", "");
+    fn test_build_hash_rejected() {
+        // Hash embedder is no longer a valid production option
+        let result = build_embedder("hash", "", "");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_build_openai_without_key_rejected() {
+        let result = build_embedder("openai", "", "text-embedding-3-small");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_build_test_embedder() {
+        let e = build_test_embedder();
         assert_eq!(e.provider_name(), "hash");
-        assert!(e.is_fallback());
+        assert_eq!(e.dim(), 384);
     }
 }

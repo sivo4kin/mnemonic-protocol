@@ -1,9 +1,11 @@
 mod arweave;
+mod codec;
 mod compress;
 mod config;
 mod db;
 mod embed;
 mod identity;
+mod lineage;
 mod mcp;
 mod payment;
 mod pricing;
@@ -347,9 +349,15 @@ async fn main() -> anyhow::Result<()> {
         &cfg.embed_provider,
         &cfg.openai_api_key,
         &cfg.openai_embed_model,
-    );
+    ).unwrap_or_else(|e| {
+        tracing::error!("FATAL: {e}");
+        std::process::exit(1);
+    });
     let dim = embedder.dim();
-    tracing::info!("Embedder: {} ({}-dim)", embedder.provider_name(), dim);
+    tracing::info!(
+        "Embedder: {} ({}-dim, model={}, verifiable={})",
+        embedder.provider_name(), dim, embedder.model_id(), embedder.is_open_weights(),
+    );
 
     let compressor = compress::EmbeddingCompressor::new(dim, cfg.turbo_bits, 42);
     tracing::info!(

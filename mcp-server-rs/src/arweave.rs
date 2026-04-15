@@ -22,11 +22,14 @@ impl ArweaveClient {
         }
     }
 
-    /// Write payload to Arweave (arlocal in dev, Irys in prod).
-    /// The keypair is used to sign the ANS-104 bundle item for Irys uploads;
-    /// it is ignored for local arlocal writes.
+    /// Write string payload to Arweave.
     pub async fn write(&self, payload: &str, keypair: &Keypair) -> anyhow::Result<String> {
-        let data = payload.as_bytes();
+        self.write_bytes(payload.as_bytes(), keypair).await
+    }
+
+    /// Write raw bytes to Arweave (arlocal in dev, Irys in prod).
+    /// Used for COSE_Sign1 encoded artifacts.
+    pub async fn write_bytes(&self, data: &[u8], keypair: &Keypair) -> anyhow::Result<String> {
         if self.is_local() {
             self.write_arlocal(data).await
         } else {
