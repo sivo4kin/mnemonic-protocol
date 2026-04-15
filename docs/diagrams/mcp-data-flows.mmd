@@ -1,0 +1,80 @@
+sequenceDiagram
+    autonumber
+    actor Client
+    participant Transport as HTTP / stdio transport
+    participant Payment as Payment gate
+    participant RPC as JSON-RPC dispatcher
+    participant Tool as Tool handler
+    participant Embed as Embedder
+    participant TQ as TurboQuant
+    participant Codec as Canonical CBOR + COSE
+    participant Ar as Arweave
+    participant Sol as Solana / SPL Memo
+    participant DB as SQLite
+
+    rect rgba(235, 245, 255, 0.7)
+        Note over Client,DB: sign_memory (current main)
+        Client->>Transport: tools/call(mnemonic_sign_memory)
+        opt HTTP + paid + non-local mode
+            Transport->>Payment: check payment
+            alt payment satisfied
+                Payment-->>Transport: allow request
+            else payment required
+                Payment-->>Transport: HTTP 402 / auth challenge
+            end
+        end
+        Transport->>RPC: JSON-RPC request
+        RPC->>Tool: sign_memory(content, tags)
+        Tool->>Embed: embed(content)
+        Embed-->>Tool: full embedding
+        Tool->>TQ: compress(embedding)
+        TQ-->>Tool: compressed embedding
+        Tool->>Codec: canonicalize + blake3 + COSE sign
+        Codec-->>Tool: signed artifact bytes + content hash
+        alt STORAGE_MODE=full
+            Tool->>Ar: write signed bytes
+            Ar-->>Tool: arweave_tx
+            Tool->>Sol: write memo {h,a,m,v:3}
+            Sol-->>Tool: solana_tx
+        else STORAGE_MODE=local
+            Tool-->>Tool: synthesize local:* ids
+        end
+        Tool->>DB: save attestation + full embedding
+        DB-->>Tool: ok
+        Tool-->>RPC: result JSON
+        RPC-->>Client: attestation result
+    end
+
+    rect rgba(235, 255, 235, 0.7)
+        Note over Client,DB: recall
+        Client->>Transport: tools/call(mnemonic_recall)
+        Transport->>RPC: JSON-RPC request
+        RPC->>Tool: recall(query, limit)
+        Tool->>Embed: embed(query)
+        Embed-->>Tool: query embedding
+        Tool->>DB: search(full embeddings in SQLite)
+        DB-->>Tool: ranked matches
+        Tool-->>RPC: recall result set
+        RPC-->>Client: top results
+    end
+
+    rect rgba(255, 245, 235, 0.7)
+        Note over Client,DB: verify
+        Client->>Transport: tools/call(mnemonic_verify)
+        Transport->>RPC: JSON-RPC request
+        RPC->>Tool: verify(solana_tx, arweave_tx)
+        alt STORAGE_MODE=full / anchored artifact
+            Tool->>Sol: read anchor
+            Sol-->>Tool: hash + arweave ref + version
+            Tool->>Ar: fetch artifact bytes
+            Ar-->>Tool: bytes
+            Tool->>Codec: verify COSE / detect legacy
+            Codec-->>Tool: verified or tampered
+        else STORAGE_MODE=local
+            Tool->>DB: lookup by local tx id
+            DB-->>Tool: stored row
+            Tool-->>Tool: local integrity check
+        end
+        Tool-->>RPC: verification result
+        RPC-->>Client: response
+    end
