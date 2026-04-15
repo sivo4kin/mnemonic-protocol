@@ -1,0 +1,12 @@
+/Users/syi/src/mnemonic-protocol/mcp-server-rs/target/debug/deps/half-0e5d693d5a00fffd.d: /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/half-2.7.1/src/lib.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/half-2.7.1/src/bfloat.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/half-2.7.1/src/bfloat/convert.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/half-2.7.1/src/binary16.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/half-2.7.1/src/binary16/arch.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/half-2.7.1/src/binary16/arch/aarch64.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/half-2.7.1/src/leading_zeros.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/half-2.7.1/src/slice.rs
+
+/Users/syi/src/mnemonic-protocol/mcp-server-rs/target/debug/deps/libhalf-0e5d693d5a00fffd.rmeta: /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/half-2.7.1/src/lib.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/half-2.7.1/src/bfloat.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/half-2.7.1/src/bfloat/convert.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/half-2.7.1/src/binary16.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/half-2.7.1/src/binary16/arch.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/half-2.7.1/src/binary16/arch/aarch64.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/half-2.7.1/src/leading_zeros.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/half-2.7.1/src/slice.rs
+
+/Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/half-2.7.1/src/lib.rs:
+/Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/half-2.7.1/src/bfloat.rs:
+/Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/half-2.7.1/src/bfloat/convert.rs:
+/Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/half-2.7.1/src/binary16.rs:
+/Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/half-2.7.1/src/binary16/arch.rs:
+/Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/half-2.7.1/src/binary16/arch/aarch64.rs:
+/Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/half-2.7.1/src/leading_zeros.rs:
+/Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/half-2.7.1/src/slice.rs:

@@ -1,0 +1,12 @@
+/Users/syi/src/mnemonic-protocol/mcp-server-rs/target/debug/deps/getrandom-681aa8b90e949482.d: /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/getrandom-0.3.4/src/lib.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/getrandom-0.3.4/src/backends.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/getrandom-0.3.4/src/error.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/getrandom-0.3.4/src/util.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/getrandom-0.3.4/src/error_std_impls.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/getrandom-0.3.4/src/../README.md /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/getrandom-0.3.4/src/backends/getentropy.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/getrandom-0.3.4/src/backends/../util_libc.rs
+
+/Users/syi/src/mnemonic-protocol/mcp-server-rs/target/debug/deps/libgetrandom-681aa8b90e949482.rmeta: /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/getrandom-0.3.4/src/lib.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/getrandom-0.3.4/src/backends.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/getrandom-0.3.4/src/error.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/getrandom-0.3.4/src/util.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/getrandom-0.3.4/src/error_std_impls.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/getrandom-0.3.4/src/../README.md /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/getrandom-0.3.4/src/backends/getentropy.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/getrandom-0.3.4/src/backends/../util_libc.rs
+
+/Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/getrandom-0.3.4/src/lib.rs:
+/Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/getrandom-0.3.4/src/backends.rs:
+/Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/getrandom-0.3.4/src/error.rs:
+/Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/getrandom-0.3.4/src/util.rs:
+/Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/getrandom-0.3.4/src/error_std_impls.rs:
+/Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/getrandom-0.3.4/src/../README.md:
+/Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/getrandom-0.3.4/src/backends/getentropy.rs:
+/Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/getrandom-0.3.4/src/backends/../util_libc.rs:

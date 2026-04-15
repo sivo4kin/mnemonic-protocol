@@ -1,0 +1,9 @@
+/Users/syi/src/mnemonic-protocol/mcp-server-rs/target/debug/deps/spl_generic_token-362cbcf4381d9c00.d: /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/spl-generic-token-1.0.1/src/lib.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/spl-generic-token-1.0.1/src/associated_token_account.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/spl-generic-token-1.0.1/src/generic_token.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/spl-generic-token-1.0.1/src/token.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/spl-generic-token-1.0.1/src/token_2022.rs
+
+/Users/syi/src/mnemonic-protocol/mcp-server-rs/target/debug/deps/libspl_generic_token-362cbcf4381d9c00.rmeta: /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/spl-generic-token-1.0.1/src/lib.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/spl-generic-token-1.0.1/src/associated_token_account.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/spl-generic-token-1.0.1/src/generic_token.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/spl-generic-token-1.0.1/src/token.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/spl-generic-token-1.0.1/src/token_2022.rs
+
+/Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/spl-generic-token-1.0.1/src/lib.rs:
+/Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/spl-generic-token-1.0.1/src/associated_token_account.rs:
+/Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/spl-generic-token-1.0.1/src/generic_token.rs:
+/Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/spl-generic-token-1.0.1/src/token.rs:
+/Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/spl-generic-token-1.0.1/src/token_2022.rs:

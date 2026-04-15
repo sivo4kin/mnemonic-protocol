@@ -1,0 +1,11 @@
+/Users/syi/src/mnemonic-protocol/mcp-server-rs/target/debug/deps/hybrid_array-f3d0f43576b55329.d: /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hybrid-array-0.4.10/src/lib.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hybrid-array-0.4.10/src/sizes.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hybrid-array-0.4.10/src/flatten.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hybrid-array-0.4.10/src/from_fn.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hybrid-array-0.4.10/src/iter.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hybrid-array-0.4.10/src/traits.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hybrid-array-0.4.10/src/../README.md
+
+/Users/syi/src/mnemonic-protocol/mcp-server-rs/target/debug/deps/libhybrid_array-f3d0f43576b55329.rmeta: /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hybrid-array-0.4.10/src/lib.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hybrid-array-0.4.10/src/sizes.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hybrid-array-0.4.10/src/flatten.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hybrid-array-0.4.10/src/from_fn.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hybrid-array-0.4.10/src/iter.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hybrid-array-0.4.10/src/traits.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hybrid-array-0.4.10/src/../README.md
+
+/Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hybrid-array-0.4.10/src/lib.rs:
+/Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hybrid-array-0.4.10/src/sizes.rs:
+/Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hybrid-array-0.4.10/src/flatten.rs:
+/Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hybrid-array-0.4.10/src/from_fn.rs:
+/Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hybrid-array-0.4.10/src/iter.rs:
+/Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hybrid-array-0.4.10/src/traits.rs:
+/Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hybrid-array-0.4.10/src/../README.md:

@@ -1,0 +1,12 @@
+/Users/syi/src/mnemonic-protocol/mcp-server-rs/target/debug/deps/digest-6aab28a48eccfa10.d: /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/digest-0.10.7/src/lib.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/digest-0.10.7/src/core_api.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/digest-0.10.7/src/core_api/ct_variable.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/digest-0.10.7/src/core_api/rt_variable.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/digest-0.10.7/src/core_api/wrapper.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/digest-0.10.7/src/core_api/xof_reader.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/digest-0.10.7/src/digest.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/digest-0.10.7/src/mac.rs
+
+/Users/syi/src/mnemonic-protocol/mcp-server-rs/target/debug/deps/libdigest-6aab28a48eccfa10.rmeta: /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/digest-0.10.7/src/lib.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/digest-0.10.7/src/core_api.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/digest-0.10.7/src/core_api/ct_variable.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/digest-0.10.7/src/core_api/rt_variable.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/digest-0.10.7/src/core_api/wrapper.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/digest-0.10.7/src/core_api/xof_reader.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/digest-0.10.7/src/digest.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/digest-0.10.7/src/mac.rs
+
+/Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/digest-0.10.7/src/lib.rs:
+/Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/digest-0.10.7/src/core_api.rs:
+/Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/digest-0.10.7/src/core_api/ct_variable.rs:
+/Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/digest-0.10.7/src/core_api/rt_variable.rs:
+/Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/digest-0.10.7/src/core_api/wrapper.rs:
+/Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/digest-0.10.7/src/core_api/xof_reader.rs:
+/Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/digest-0.10.7/src/digest.rs:
+/Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/digest-0.10.7/src/mac.rs:

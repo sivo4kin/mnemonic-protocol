@@ -1,0 +1,9 @@
+/Users/syi/src/mnemonic-protocol/mcp-server-rs/target/debug/deps/system_configuration-f0ac88b51b3841bd.d: /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/system-configuration-0.7.0/src/lib.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/system-configuration-0.7.0/src/dynamic_store.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/system-configuration-0.7.0/src/network_configuration.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/system-configuration-0.7.0/src/network_reachability.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/system-configuration-0.7.0/src/preferences.rs
+
+/Users/syi/src/mnemonic-protocol/mcp-server-rs/target/debug/deps/libsystem_configuration-f0ac88b51b3841bd.rmeta: /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/system-configuration-0.7.0/src/lib.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/system-configuration-0.7.0/src/dynamic_store.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/system-configuration-0.7.0/src/network_configuration.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/system-configuration-0.7.0/src/network_reachability.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/system-configuration-0.7.0/src/preferences.rs
+
+/Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/system-configuration-0.7.0/src/lib.rs:
+/Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/system-configuration-0.7.0/src/dynamic_store.rs:
+/Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/system-configuration-0.7.0/src/network_configuration.rs:
+/Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/system-configuration-0.7.0/src/network_reachability.rs:
+/Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/system-configuration-0.7.0/src/preferences.rs:

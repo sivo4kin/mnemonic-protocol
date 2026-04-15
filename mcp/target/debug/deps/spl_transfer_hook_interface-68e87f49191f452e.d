@@ -1,0 +1,9 @@
+/Users/syi/src/mnemonic-protocol/mcp-server-rs/target/debug/deps/spl_transfer_hook_interface-68e87f49191f452e.d: /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/spl-transfer-hook-interface-0.10.0/src/lib.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/spl-transfer-hook-interface-0.10.0/src/error.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/spl-transfer-hook-interface-0.10.0/src/instruction.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/spl-transfer-hook-interface-0.10.0/src/offchain.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/spl-transfer-hook-interface-0.10.0/src/onchain.rs
+
+/Users/syi/src/mnemonic-protocol/mcp-server-rs/target/debug/deps/libspl_transfer_hook_interface-68e87f49191f452e.rmeta: /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/spl-transfer-hook-interface-0.10.0/src/lib.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/spl-transfer-hook-interface-0.10.0/src/error.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/spl-transfer-hook-interface-0.10.0/src/instruction.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/spl-transfer-hook-interface-0.10.0/src/offchain.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/spl-transfer-hook-interface-0.10.0/src/onchain.rs
+
+/Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/spl-transfer-hook-interface-0.10.0/src/lib.rs:
+/Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/spl-transfer-hook-interface-0.10.0/src/error.rs:
+/Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/spl-transfer-hook-interface-0.10.0/src/instruction.rs:
+/Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/spl-transfer-hook-interface-0.10.0/src/offchain.rs:
+/Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/spl-transfer-hook-interface-0.10.0/src/onchain.rs:

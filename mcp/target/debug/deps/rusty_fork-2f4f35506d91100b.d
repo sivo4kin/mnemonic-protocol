@@ -1,0 +1,11 @@
+/Users/syi/src/mnemonic-protocol/mcp-server-rs/target/debug/deps/rusty_fork-2f4f35506d91100b.d: /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rusty-fork-0.3.1/src/lib.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rusty-fork-0.3.1/src/sugar.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rusty-fork-0.3.1/src/fork_test.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rusty-fork-0.3.1/src/error.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rusty-fork-0.3.1/src/cmdline.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rusty-fork-0.3.1/src/fork.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rusty-fork-0.3.1/src/child_wrapper.rs
+
+/Users/syi/src/mnemonic-protocol/mcp-server-rs/target/debug/deps/librusty_fork-2f4f35506d91100b.rmeta: /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rusty-fork-0.3.1/src/lib.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rusty-fork-0.3.1/src/sugar.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rusty-fork-0.3.1/src/fork_test.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rusty-fork-0.3.1/src/error.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rusty-fork-0.3.1/src/cmdline.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rusty-fork-0.3.1/src/fork.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rusty-fork-0.3.1/src/child_wrapper.rs
+
+/Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rusty-fork-0.3.1/src/lib.rs:
+/Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rusty-fork-0.3.1/src/sugar.rs:
+/Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rusty-fork-0.3.1/src/fork_test.rs:
+/Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rusty-fork-0.3.1/src/error.rs:
+/Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rusty-fork-0.3.1/src/cmdline.rs:
+/Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rusty-fork-0.3.1/src/fork.rs:
+/Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rusty-fork-0.3.1/src/child_wrapper.rs:

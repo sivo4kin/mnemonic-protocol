@@ -1,0 +1,17 @@
+/Users/syi/src/mnemonic-protocol/mcp-server-rs/target/debug/deps/thiserror_impl-34286101786f93f9.d: /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-impl-2.0.18/src/lib.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-impl-2.0.18/src/ast.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-impl-2.0.18/src/attr.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-impl-2.0.18/src/expand.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-impl-2.0.18/src/fallback.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-impl-2.0.18/src/fmt.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-impl-2.0.18/src/generics.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-impl-2.0.18/src/prop.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-impl-2.0.18/src/scan_expr.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-impl-2.0.18/src/unraw.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-impl-2.0.18/src/valid.rs
+
+/Users/syi/src/mnemonic-protocol/mcp-server-rs/target/debug/deps/libthiserror_impl-34286101786f93f9.dylib: /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-impl-2.0.18/src/lib.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-impl-2.0.18/src/ast.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-impl-2.0.18/src/attr.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-impl-2.0.18/src/expand.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-impl-2.0.18/src/fallback.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-impl-2.0.18/src/fmt.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-impl-2.0.18/src/generics.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-impl-2.0.18/src/prop.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-impl-2.0.18/src/scan_expr.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-impl-2.0.18/src/unraw.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-impl-2.0.18/src/valid.rs
+
+/Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-impl-2.0.18/src/lib.rs:
+/Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-impl-2.0.18/src/ast.rs:
+/Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-impl-2.0.18/src/attr.rs:
+/Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-impl-2.0.18/src/expand.rs:
+/Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-impl-2.0.18/src/fallback.rs:
+/Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-impl-2.0.18/src/fmt.rs:
+/Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-impl-2.0.18/src/generics.rs:
+/Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-impl-2.0.18/src/prop.rs:
+/Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-impl-2.0.18/src/scan_expr.rs:
+/Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-impl-2.0.18/src/unraw.rs:
+/Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-impl-2.0.18/src/valid.rs:
+
+# env-dep:CARGO_PKG_VERSION_PATCH=18

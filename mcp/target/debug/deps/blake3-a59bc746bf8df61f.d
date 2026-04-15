@@ -1,0 +1,13 @@
+/Users/syi/src/mnemonic-protocol/mcp-server-rs/target/debug/deps/blake3-a59bc746bf8df61f.d: /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/blake3-1.8.4/src/lib.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/blake3-1.8.4/src/guts.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/blake3-1.8.4/src/hazmat.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/blake3-1.8.4/src/platform.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/blake3-1.8.4/src/ffi_neon.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/blake3-1.8.4/src/portable.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/blake3-1.8.4/src/traits.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/blake3-1.8.4/src/io.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/blake3-1.8.4/src/join.rs
+
+/Users/syi/src/mnemonic-protocol/mcp-server-rs/target/debug/deps/libblake3-a59bc746bf8df61f.rmeta: /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/blake3-1.8.4/src/lib.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/blake3-1.8.4/src/guts.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/blake3-1.8.4/src/hazmat.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/blake3-1.8.4/src/platform.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/blake3-1.8.4/src/ffi_neon.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/blake3-1.8.4/src/portable.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/blake3-1.8.4/src/traits.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/blake3-1.8.4/src/io.rs /Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/blake3-1.8.4/src/join.rs
+
+/Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/blake3-1.8.4/src/lib.rs:
+/Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/blake3-1.8.4/src/guts.rs:
+/Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/blake3-1.8.4/src/hazmat.rs:
+/Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/blake3-1.8.4/src/platform.rs:
+/Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/blake3-1.8.4/src/ffi_neon.rs:
+/Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/blake3-1.8.4/src/portable.rs:
+/Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/blake3-1.8.4/src/traits.rs:
+/Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/blake3-1.8.4/src/io.rs:
+/Users/syi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/blake3-1.8.4/src/join.rs:
