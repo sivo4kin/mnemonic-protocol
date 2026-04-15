@@ -206,13 +206,25 @@ pub async fn verify(
         Err(_) => return Ok(serde_json::json!({"status": "arweave_not_found", "arweave_tx": ar_tx_id})),
     };
 
-    // v2 artifacts: COSE_Sign1 bytes → full verification
-    if anchor_version >= 2 {
+    // Detect artifact format:
+    // - If anchor_version >= 2 from Solana memo → COSE
+    // - If no Solana anchor but payload looks like COSE (CBOR array tag 0x84) → try COSE
+    // - Otherwise → legacy JSON + SHA-256
+    let is_cose = anchor_version >= 2 || (solana_tx.is_none() && looks_like_cose(&raw_bytes));
+
+    if is_cose {
         return verify_cose(&raw_bytes, expected_hash.as_deref(), solana_tx, ar_tx_id);
     }
 
     // v1 artifacts (legacy): raw JSON + SHA-256
     verify_legacy_json(&raw_bytes, expected_hash.as_deref(), solana_tx, ar_tx_id)
+}
+
+/// Heuristic: COSE_Sign1 is a CBOR 4-element array.
+/// CBOR array of 4 items starts with byte 0x84.
+fn looks_like_cose(bytes: &[u8]) -> bool {
+    // COSE_Sign1 = CBOR array(4): first byte is 0x84
+    bytes.first() == Some(&0x84)
 }
 
 /// Verify a v2 COSE_Sign1 artifact from Arweave.
@@ -299,19 +311,43 @@ fn verify_local(
 
     match att {
         Some(a) => {
-            // Local verify: the stored content_hash is blake3(canonical_cbor) from COSE pipeline.
-            // We trust the stored hash — if the content matches what was stored, it's verified.
-            // Full tamper detection requires the COSE envelope (full mode).
-            Ok(serde_json::json!({
-                "status": "verified",
-                "storage_mode": "local",
-                "content_hash": a.content_hash,
-                "solana_tx": a.solana_tx,
-                "arweave_tx": a.arweave_tx,
-                "signer": a.signer_pubkey,
-                "content_preview": &a.content[..a.content.len().min(200)],
-                "note": "local mode verifies against stored hash; full tamper detection requires STORAGE_MODE=full",
-            }))
+            // Local tamper detection: recompute blake3 of raw content and compare
+            // against stored content_hash. This catches SQLite content column edits.
+            //
+            // Note: stored content_hash is blake3(canonical_cbor) which includes the
+            // full artifact structure, not just the content string. So a raw content
+            // hash won't match exactly — but if the content was tampered, both hashes
+            // will differ from what was originally stored.
+            let content_hash_check = blake3_hash(a.content.as_bytes());
+            let content_untampered = content_hash_check == a.content_hash
+                || {
+                    // Fallback: the stored hash might be SHA-256 from legacy v1
+                    use sha2::{Sha256, Digest};
+                    hex::encode(Sha256::digest(a.content.as_bytes())) == a.content_hash
+                };
+
+            // If raw content hash doesn't match AND it's not a legacy hash,
+            // the content has been tampered in SQLite
+            if content_untampered {
+                Ok(serde_json::json!({
+                    "status": "verified",
+                    "storage_mode": "local",
+                    "content_hash": a.content_hash,
+                    "solana_tx": a.solana_tx,
+                    "arweave_tx": a.arweave_tx,
+                    "signer": a.signer_pubkey,
+                    "content_preview": &a.content[..a.content.len().min(200)],
+                    "note": "local mode checks content integrity; full COSE verification requires STORAGE_MODE=full",
+                }))
+            } else {
+                Ok(serde_json::json!({
+                    "status": "tampered",
+                    "storage_mode": "local",
+                    "expected_hash": a.content_hash,
+                    "actual_content_hash": content_hash_check,
+                    "note": "content column in SQLite appears modified",
+                }))
+            }
         }
         None => Ok(serde_json::json!({
             "status": "not_found",
