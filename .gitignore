@@ -9,3 +9,5 @@ test-ledger/
 test-keypair.json
 .qwen/
 mcp/target
+mcp/.fastembed_cache
+mcp/target
