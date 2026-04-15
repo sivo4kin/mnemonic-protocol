@@ -1,6 +1,8 @@
 //! Embedding service — pluggable: fastembed (local ONNX), OpenAI API, or hash fallback.
 
 use sha2::{Sha256, Digest};
+#[cfg(feature = "local-embed")]
+use std::sync::Mutex;
 
 /// Embedding provider trait.
 pub trait Embedder: Send + Sync {
@@ -22,7 +24,7 @@ pub trait Embedder: Send + Sync {
 /// Enable with: cargo build --features local-embed
 #[cfg(feature = "local-embed")]
 pub struct FastEmbedder {
-    model: fastembed::TextEmbedding,
+    model: Mutex<fastembed::TextEmbedding>,
     dim: usize,
 }
 
@@ -30,24 +32,32 @@ pub struct FastEmbedder {
 impl FastEmbedder {
     pub fn try_new() -> Result<Self, String> {
         use fastembed::{TextEmbedding, InitOptions, EmbeddingModel};
-        let model = TextEmbedding::try_new(InitOptions {
-            model_name: EmbeddingModel::AllMiniLML6V2,
-            ..Default::default()
-        }).map_err(|e| format!("fastembed init failed: {e}"))?;
+        let mut model = TextEmbedding::try_new(InitOptions::new(EmbeddingModel::AllMiniLML6V2))
+            .map_err(|e| format!("fastembed init failed: {e}"))?;
 
         // Probe dimension
         let sample = model.embed(vec!["test"], None)
             .map_err(|e| format!("fastembed probe failed: {e}"))?;
         let dim = sample.first().map(|v| v.len()).unwrap_or(384);
 
-        Ok(Self { model, dim })
+        Ok(Self {
+            model: Mutex::new(model),
+            dim,
+        })
     }
 }
 
 #[cfg(feature = "local-embed")]
 impl Embedder for FastEmbedder {
     fn embed(&self, text: &str) -> Vec<f32> {
-        match self.model.embed(vec![text.to_string()], None) {
+        let mut model = match self.model.lock() {
+            Ok(model) => model,
+            Err(e) => {
+                tracing::error!("fastembed lock poisoned: {e}");
+                return vec![0.0; self.dim];
+            }
+        };
+        match model.embed(vec![text.to_string()], None) {
             Ok(embeddings) => {
                 embeddings.into_iter().next().unwrap_or_else(|| vec![0.0; self.dim])
             }
