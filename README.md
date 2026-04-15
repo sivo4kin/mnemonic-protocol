@@ -1,204 +1,106 @@
 # mnemonic-protocol
 
-Minimal runnable MVP prototype for a **TurboQuant-inspired agent memory system**.
+Mnemonic is a verifiable memory / artifact infrastructure project for AI agents.
 
-This is **not** full TurboQuant.
-It is a compact prototype for testing a more production-shaped retrieval architecture:
+This repository currently contains both:
 
-- keep **full-precision embeddings** as source of truth
-- build a **compressed shadow index**
-- use **exact rerank** as the correction layer
-- improve compressed retrieval with **corpus-calibrated per-dimension quantization**
-- support both **offline mock embeddings** and **real OpenAI embeddings**
-- support **real JSONL benchmark datasets** and **JSON result export**
+1. the **active Rust MCP implementation** on `main`, and
+2. older **research / prototype / design-lineage** material.
 
-## Files
+To avoid split-brain interpretation, treat the current implementation docs as canonical.
 
-- `MVP_SPEC.md` — goals, non-goals, success criteria, milestones, metrics
-- `ARCHITECTURE.md` — ingestion flow, storage layers, retrieval cascade, future extensions
-- `SCHEMA.md` — suggested data model for memory records, embeddings, and quantized index
-- `pseudocode.py` — runnable prototype with demo and benchmark modes
+---
 
-## Embedding modes
+## Canonical implementation truth
 
-### 1. Mock mode
-- fully offline
-- deterministic
-- good for quick architecture testing
+If you want to know what the code does **today**, start here:
 
-### 2. OpenAI mode
-- real embeddings via the OpenAI embeddings API
-- cached locally on disk to avoid repeated API calls
+- `mcp/README.md`
+- `docs/versions/v0.0.3/SPEC.md`
+- `docs/versions/v0.0.3/API.md`
+- `docs/IMPLEMENTATION_AUDIT.md`
+- `docs/IMPLEMENTATION_STATUS.md`
+- `docs/README.md`
 
-## Environment variables for OpenAI mode
+### Current implementation summary
 
-Required:
+The active implementation is the Rust MCP server in:
 
-```bash
-export OPENAI_API_KEY="your_api_key_here"
-```
+- `mcp/`
 
-Optional:
+Current implementation characteristics:
 
-```bash
-export OPENAI_EMBEDDING_MODEL="text-embedding-3-small"
-```
+- MCP over HTTP + stdio
+- 5 Mnemonic tools
+- canonical CBOR + COSE artifact signing
+- blake3 hashing for current artifacts
+- SQLite recall over full embeddings
+- storage modes: `local` and `full`
+- optional Solana + Arweave persistence in `full` mode
+- payment-aware HTTP serving
 
-Default model if not set:
-- `text-embedding-3-small`
+---
 
-## Local embedding cache
+## Research / legacy / prototype lineage
 
-Embeddings are cached under:
+Older prototype and research documents are still kept because they explain:
 
-```text
-src/.cache/embeddings/
-```
+- the compression/retrieval thesis
+- snapshot/restore portability ideas
+- encrypted snapshot commitment lineage
+- benchmark and roadmap context
 
-Cache key depends on:
-- provider
-- model
-- text
+Those docs are now grouped under:
 
-## Run with mock embeddings
+- `docs/legacy/`
+- `docs/research/`
+- `docs/adr/`
 
-Demo:
+Important:
 
-```bash
-python3 src/pseudocode.py demo --embedder mock
-```
+> These materials are valuable context, but they are **not** the canonical description of the current `mcp/` implementation unless explicitly stated.
 
-Benchmark:
+---
 
-```bash
-python3 src/pseudocode.py benchmark --embedder mock --bits 8 --memories 1000 --queries 50 --k 10 --candidates 50
-```
+## Documentation map
 
-## Run with OpenAI embeddings
+### Current implementation docs
+- `docs/README.md`
+- `docs/IMPLEMENTATION_STATUS.md`
+- `docs/IMPLEMENTATION_AUDIT.md`
+- `docs/versions/v0.0.3/SPEC.md`
+- `docs/versions/v0.0.3/API.md`
 
-Demo:
+### Current code
+- `mcp/`
 
-```bash
-export OPENAI_API_KEY="your_api_key_here"
-export OPENAI_EMBEDDING_MODEL="text-embedding-3-small"
-python3 src/pseudocode.py demo --embedder openai --bits 8
-```
+### Legacy / research lineage
+- `docs/legacy/WHITEPAPER.full.md`
+- `docs/legacy/ARCHITECTURE.full.md`
+- `docs/legacy/PROJECT_STATE.full.md`
+- `docs/legacy/BLOCKERS.full.md`
+- `docs/research/*`
+- `docs/adr/ADR.md`
+- `legacy/`
 
-Benchmark:
+---
 
-```bash
-export OPENAI_API_KEY="your_api_key_here"
-export OPENAI_EMBEDDING_MODEL="text-embedding-3-small"
-python3 src/pseudocode.py benchmark --embedder openai --bits 8 --memories 200 --queries 20 --k 10 --candidates 50
-```
+## Rule of thumb
 
-## Real dataset input (JSONL)
+When docs disagree:
 
-You can benchmark your own memory/query data.
+- **implementation truth** = `mcp/` + `docs/versions/v0.0.3/*`
+- **research / legacy truth** = `docs/legacy/*`, `docs/research/*`, `docs/adr/*`
 
-### Memory file format
-Each line is JSON with at least:
-- `memory_id`
-- `content`
+That split is intentional and explicit.
 
-Optional:
-- `memory_type`
-- `importance_score`
-- `tags`
+---
 
-Example `memories.jsonl`:
+## Current goal
 
-```jsonl
-{"memory_id":"m1","content":"TurboQuant paper summary about vector quantization","memory_type":"research","tags":["quantization","paper"]}
-{"memory_id":"m2","content":"Agent memory design note about compressed retrieval and reranking","memory_type":"design","importance_score":0.8}
-{"memory_id":"m3","content":"Blockchain monitoring memory about wallet risk and suspicious transactions"}
-```
+The repository is being cleaned up so that:
 
-### Query file format
-Each line is JSON with at least:
-- `query`
+- current implementation docs are easy to find and trust
+- research / prototype lineage remains available without pretending to be the current code path
 
-Optional:
-- `relevant_ids` (list of labeled relevant memory ids)
-
-Example `queries.jsonl`:
-
-```jsonl
-{"query":"compressed agent memory retrieval","relevant_ids":["m2"]}
-{"query":"vector quantization research","relevant_ids":["m1"]}
-{"query":"wallet transaction risk","relevant_ids":["m3"]}
-```
-
-### Benchmark behavior
-- if `relevant_ids` are present, benchmark uses those labels
-- if `relevant_ids` are absent, benchmark falls back to exact-search-as-baseline
-
-## Benchmarking a real dataset
-
-Example with OpenAI embeddings and JSON output:
-
-```bash
-export OPENAI_API_KEY="your_api_key_here"
-export OPENAI_EMBEDDING_MODEL="text-embedding-3-small"
-python3 src/pseudocode.py benchmark \
-  --embedder openai \
-  --bits 8 \
-  --memory-file ./memories.jsonl \
-  --query-file ./queries.jsonl \
-  --k 10 \
-  --candidates 50 \
-  --out ./results.json
-```
-
-## JSON result export
-
-If `--out` is provided, the benchmark writes a JSON file containing:
-- benchmark config
-- dataset mode
-- judged/unjudged mode
-- metrics
-
-This makes it easier to compare runs later.
-
-## Metrics reported
-
-- candidate recall@k
-- final recall@k
-- candidate recall@n_candidates
-- compression ratio
-- quantization alpha summary
-- saturation diagnostics
-
-## What to look for
-
-### Candidate recall@k
-How many true top-k items already show up in the compressed shortlist.
-
-### Final recall@k
-How much exact rerank restores quality after compressed candidate generation.
-This is the most important MVP metric.
-
-### Compression ratio
-How much smaller the compressed index is than float32 normalized vectors.
-
-### Saturation stats
-If saturation is high, clip ranges are too tight or poorly calibrated.
-
-## Recommended defaults
-
-- embedder: `mock` for offline development, `openai` for real testing
-- quantization bits: `8`
-- final results: `k=10`
-- shortlist size: `50`
-
-## What this prototype is for
-
-This prototype validates the architecture question:
-
-> Can a compressed shadow index reduce storage cost while preserving retrieval quality well enough through exact reranking?
-
-If yes, the next steps are:
-- benchmark on real memory/query data
-- add persistence for indexed corpora
-- separate ingestion from retrieval
-- only then consider TurboQuant-style transforms or residual correction
+That is the policy going forward.
