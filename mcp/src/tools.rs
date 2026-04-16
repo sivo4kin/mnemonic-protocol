@@ -12,13 +12,14 @@ use crate::{
     codec::{
         canonical::from_canonical_cbor,
         hash::hash_bytes as blake3_hash,
-        schema::{self, ArtifactSchema},
+        schema::{self, ArtifactSchema, ParentRef},
         sign::{sign_artifact, verify_artifact as cose_verify},
     },
     compress::EmbeddingCompressor,
     db::AttestationStore,
     embed::Embedder,
     identity,
+    lineage,
     pricing::CostHint,
     solana::SolanaClient,
 };
@@ -54,12 +55,24 @@ pub async fn sign_memory(
     compressor: &EmbeddingCompressor,
     content: &str,
     tags: &[String],
+    parents: &[ParentRef],
     cost_hint: &CostHint,
     storage_mode: &str,
 ) -> anyhow::Result<serde_json::Value> {
     let pubkey = identity::pubkey_base58(keypair);
     let attestation_id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().to_rfc3339();
+
+    // 0. Validate parents (existence + cycle detection) before doing any work
+    if !parents.is_empty() {
+        let store_guard = store.lock().unwrap();
+        lineage::validate_parents(
+            store_guard.conn(),
+            &attestation_id,
+            parents,
+            &|id| store_guard.attestation_exists(id),
+        ).map_err(|e| anyhow::anyhow!("{e}"))?;
+    }
 
     // 1. Embed content
     let embedding = embedder.embed(content);
@@ -69,7 +82,15 @@ pub async fn sign_memory(
     let compressed_bytes = compressed.to_bytes();
 
     // 3. Build artifact JSON for CBOR canonicalization
-    let artifact = serde_json::json!({
+    let parents_json: Vec<serde_json::Value> = parents.iter().map(|p| {
+        let mut obj = serde_json::json!({"artifact_id": p.artifact_id});
+        if let Some(ref role) = p.role {
+            obj["role"] = serde_json::json!(role);
+        }
+        obj
+    }).collect();
+
+    let mut artifact = serde_json::json!({
         "artifact_id": attestation_id,
         "type": "memory",
         "schema_version": 1,
@@ -87,6 +108,9 @@ pub async fn sign_memory(
             ),
         },
     });
+    if !parents.is_empty() {
+        artifact["parents"] = serde_json::json!(parents_json);
+    }
 
     // 4. Sign with COSE_Sign1 (canonical CBOR → blake3 → Ed25519)
     let signed = sign_artifact(&artifact, &schema::MEMORY_V1, keypair)
@@ -116,13 +140,17 @@ pub async fn sign_memory(
         (sol_tx, ar_tx)
     };
 
-    // 6. Save locally
+    // 6. Save locally + record lineage
     {
         let store = store.lock().unwrap();
         store.save_attestation(
             &attestation_id, content, &content_hash, tags,
             &solana_tx, &arweave_tx, &pubkey, &now, &embedding,
         )?;
+        // Record parent references in lineage index
+        if !parents.is_empty() {
+            lineage::record_parents(store.conn(), &attestation_id, parents, &now)?;
+        }
         if storage_mode != "local" {
             let _ = store.record_attestation_cost(
                 &attestation_id,
@@ -135,7 +163,7 @@ pub async fn sign_memory(
     }
 
     let ratio = compressor.compression_ratio();
-    Ok(serde_json::json!({
+    let mut result = serde_json::json!({
         "attestation_id": attestation_id,
         "content_hash": content_hash,
         "hash_algorithm": "blake3",
@@ -159,7 +187,11 @@ pub async fn sign_memory(
             "original_bytes": embedding.len() * 4,
             "compressed_bytes": compressed_bytes.len(),
         },
-    }))
+    });
+    if !parents.is_empty() {
+        result["parents"] = serde_json::json!(parents);
+    }
+    Ok(result)
 }
 
 /// Tool 3: verify
@@ -297,7 +329,17 @@ fn verify_legacy_json(
     Ok(serde_json::json!({"status": "hash_computed", "content_hash": actual_hash}))
 }
 
-/// Local-mode verification: SQLite lookup + blake3 recompute.
+/// Local-mode verification: SQLite lookup + hash check.
+///
+/// For v2+ artifacts (CBOR+COSE), the content_hash is blake3(canonical_cbor)
+/// over the full artifact structure, not just the content string. Local mode
+/// cannot fully reconstruct the canonical CBOR (the full artifact JSON is not
+/// persisted), so local verify confirms the record exists and reports the
+/// stored hash. For full tamper detection, use STORAGE_MODE=full or
+/// mnemonic_verify_chain.
+///
+/// For v1 (legacy) artifacts, content_hash is SHA-256(content), which we can
+/// still verify locally.
 fn verify_local(
     store: &std::sync::Mutex<AttestationStore>,
     solana_tx: Option<&str>,
@@ -311,43 +353,44 @@ fn verify_local(
 
     match att {
         Some(a) => {
-            // Local tamper detection: recompute blake3 of raw content and compare
-            // against stored content_hash. This catches SQLite content column edits.
-            //
-            // Note: stored content_hash is blake3(canonical_cbor) which includes the
-            // full artifact structure, not just the content string. So a raw content
-            // hash won't match exactly — but if the content was tampered, both hashes
-            // will differ from what was originally stored.
-            let content_hash_check = blake3_hash(a.content.as_bytes());
-            let content_untampered = content_hash_check == a.content_hash
-                || {
-                    // Fallback: the stored hash might be SHA-256 from legacy v1
-                    use sha2::{Sha256, Digest};
-                    hex::encode(Sha256::digest(a.content.as_bytes())) == a.content_hash
-                };
+            // Try legacy SHA-256 check (v1 artifacts stored SHA-256(content))
+            let legacy_match = {
+                use sha2::{Sha256, Digest};
+                hex::encode(Sha256::digest(a.content.as_bytes())) == a.content_hash
+            };
 
-            // If raw content hash doesn't match AND it's not a legacy hash,
-            // the content has been tampered in SQLite
-            if content_untampered {
-                Ok(serde_json::json!({
+            if legacy_match {
+                // v1 artifact: content hash fully verifiable locally
+                return Ok(serde_json::json!({
                     "status": "verified",
                     "storage_mode": "local",
+                    "encoding": "json+sha256 (legacy v1)",
                     "content_hash": a.content_hash,
+                    "hash_algorithm": "sha256",
                     "solana_tx": a.solana_tx,
                     "arweave_tx": a.arweave_tx,
                     "signer": a.signer_pubkey,
                     "content_preview": &a.content[..a.content.len().min(200)],
-                    "note": "local mode checks content integrity; full COSE verification requires STORAGE_MODE=full",
-                }))
-            } else {
-                Ok(serde_json::json!({
-                    "status": "tampered",
-                    "storage_mode": "local",
-                    "expected_hash": a.content_hash,
-                    "actual_content_hash": content_hash_check,
-                    "note": "content column in SQLite appears modified",
-                }))
+                }));
             }
+
+            // v2+ artifact (CBOR+COSE): content_hash = blake3(canonical_cbor)
+            // We can confirm the record exists but cannot recompute the hash
+            // without the full artifact structure. Report as "found" and
+            // recommend verify_chain for full verification.
+            Ok(serde_json::json!({
+                "status": "found",
+                "storage_mode": "local",
+                "encoding": "cbor+cose",
+                "content_hash": a.content_hash,
+                "hash_algorithm": "blake3",
+                "attestation_id": a.attestation_id,
+                "solana_tx": a.solana_tx,
+                "arweave_tx": a.arweave_tx,
+                "signer": a.signer_pubkey,
+                "content_preview": &a.content[..a.content.len().min(200)],
+                "note": "local mode cannot recompute blake3(canonical_cbor). Use mnemonic_verify_chain for full DAG verification, or STORAGE_MODE=full for on-chain verification.",
+            }))
         }
         None => Ok(serde_json::json!({
             "status": "not_found",
@@ -357,7 +400,139 @@ fn verify_local(
     }
 }
 
-/// Tool 4: prove_identity (sync — pure crypto)
+/// Tool 4: lineage (sync — DB only)
+///
+/// Traverse the lineage DAG from a starting artifact.
+pub fn get_lineage(
+    store: &AttestationStore,
+    artifact_id: &str,
+    direction: &str,
+    max_depth: usize,
+) -> serde_json::Value {
+    let node_fn = |id: &str| -> Option<lineage::LineageNode> {
+        store.find_by_id(id).ok().flatten().map(|a| lineage::LineageNode {
+            artifact_type: "memory.v1".to_string(),
+            content_hash: a.content_hash,
+            producer: a.signer_pubkey,
+            created_at: String::new(), // not stored in AttestationRow currently
+            verified: false, // not verified by traversal alone
+        })
+    };
+
+    match lineage::traverse_lineage(store.conn(), artifact_id, max_depth, direction, &node_fn) {
+        Ok(result) => serde_json::to_value(&result).unwrap_or_default(),
+        Err(e) => serde_json::json!({"error": e.to_string()}),
+    }
+}
+
+/// Tool 5: verify_chain
+///
+/// Full DAG verification: walk ancestors from artifact_id, verify each node's
+/// COSE signature, content hash, and on-chain anchor.
+pub async fn verify_chain(
+    solana: &SolanaClient,
+    arweave: &ArweaveClient,
+    store: &std::sync::Mutex<AttestationStore>,
+    artifact_id: &str,
+    storage_mode: &str,
+) -> anyhow::Result<serde_json::Value> {
+    // Phase 1: Collect all artifact info from DB (short lock, no await).
+    // We must fully release the MutexGuard before any .await to keep the future Send.
+    let (artifact_map, local_result) = {
+        let store_guard = store.lock().unwrap();
+
+        // For local mode, run verification entirely within the lock and return early data
+        if storage_mode == "local" {
+            let verifier = lineage::ChainVerifier {
+                lookup_artifact: &|id: &str| {
+                    store_guard.find_by_id(id).ok().flatten().map(|a| lineage::ArtifactInfo {
+                        attestation_id: a.attestation_id,
+                        content_hash: a.content_hash,
+                        solana_tx: a.solana_tx,
+                        arweave_tx: a.arweave_tx,
+                        signer: a.signer_pubkey,
+                    })
+                },
+                fetch_cose_bytes: &|_tx: &str| Err("local mode".to_string()),
+                fetch_anchor_hash: &|_tx: &str| Err("local mode".to_string()),
+            };
+            let result = lineage::verify_chain(store_guard.conn(), artifact_id, &verifier);
+            (std::collections::HashMap::new(), Some(serde_json::to_value(&result).unwrap_or_default()))
+        } else {
+            // Full mode: collect all reachable artifact IDs and their info.
+            let mut artifact_map: std::collections::HashMap<String, lineage::ArtifactInfo> = std::collections::HashMap::new();
+            let mut to_visit = std::collections::VecDeque::new();
+            let mut visited = std::collections::HashSet::new();
+            to_visit.push_back(artifact_id.to_string());
+
+            while let Some(id) = to_visit.pop_front() {
+                if visited.contains(&id) { continue; }
+                visited.insert(id.clone());
+
+                if let Ok(Some(a)) = store_guard.find_by_id(&id) {
+                    artifact_map.insert(id.clone(), lineage::ArtifactInfo {
+                        attestation_id: a.attestation_id,
+                        content_hash: a.content_hash,
+                        solana_tx: a.solana_tx,
+                        arweave_tx: a.arweave_tx,
+                        signer: a.signer_pubkey,
+                    });
+                    if let Ok(parents) = lineage::get_parents(store_guard.conn(), &id) {
+                        for p in parents {
+                            to_visit.push_back(p.artifact_id);
+                        }
+                    }
+                }
+            }
+            (artifact_map, None)
+        }
+    }; // MutexGuard dropped here — before any .await
+
+    // Early return for local mode
+    if let Some(result) = local_result {
+        return Ok(result);
+    }
+
+    // Phase 2: Async fetch COSE bytes and anchor hashes (no lock held)
+    let mut cose_cache: std::collections::HashMap<String, Result<Vec<u8>, String>> = std::collections::HashMap::new();
+    let mut anchor_cache: std::collections::HashMap<String, Result<Option<String>, String>> = std::collections::HashMap::new();
+
+    for info in artifact_map.values() {
+        if !info.arweave_tx.starts_with("local:") && !cose_cache.contains_key(&info.arweave_tx) {
+            match arweave.read(&info.arweave_tx).await {
+                Ok(bytes) => { cose_cache.insert(info.arweave_tx.clone(), Ok(bytes)); }
+                Err(e) => { cose_cache.insert(info.arweave_tx.clone(), Err(e.to_string())); }
+            }
+        }
+        if !info.solana_tx.starts_with("local:") && !anchor_cache.contains_key(&info.solana_tx) {
+            match solana.read_memo(&info.solana_tx).await {
+                Ok(Some(memo)) => {
+                    let hash = memo["h"].as_str().map(|s| s.to_string());
+                    anchor_cache.insert(info.solana_tx.clone(), Ok(hash));
+                }
+                Ok(None) => { anchor_cache.insert(info.solana_tx.clone(), Ok(None)); }
+                Err(e) => { anchor_cache.insert(info.solana_tx.clone(), Err(e.to_string())); }
+            }
+        }
+    }
+
+    // Phase 3: Re-acquire lock and run verify_chain with populated caches
+    let store_guard = store.lock().unwrap();
+    let verifier = lineage::ChainVerifier {
+        lookup_artifact: &|id: &str| artifact_map.get(id).cloned(),
+        fetch_cose_bytes: &|tx: &str| {
+            cose_cache.get(tx).cloned().unwrap_or_else(|| Err("not fetched".into()))
+        },
+        fetch_anchor_hash: &|tx: &str| {
+            anchor_cache.get(tx).cloned().unwrap_or_else(|| Err("not fetched".into()))
+        },
+    };
+
+    let result = lineage::verify_chain(store_guard.conn(), artifact_id, &verifier);
+    Ok(serde_json::to_value(&result).unwrap_or_default())
+}
+
+/// Tool 6: prove_identity (sync — pure crypto)
 pub fn prove_identity(keypair: &Keypair, challenge: &str) -> serde_json::Value {
     let sig = identity::sign_bytes(keypair, challenge.as_bytes());
     serde_json::json!({

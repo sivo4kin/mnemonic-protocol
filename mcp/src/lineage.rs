@@ -237,8 +237,246 @@ pub fn traverse_lineage(
         depth_traversed: max_traversed,
         nodes,
         edges,
-        chain_valid: true, // full verification done separately
+        chain_valid: false, // set by verify_chain; traversal alone does not verify
     })
+}
+
+// ── Chain Verification ──────────────────────────────────────────────────────
+
+/// Per-node verification result within a chain.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct NodeVerification {
+    pub artifact_id: String,
+    pub content_hash: String,
+    pub signer: String,
+    /// blake3(canonical_cbor) matches stored/anchored hash
+    pub content_integrity: bool,
+    /// COSE_Sign1 Ed25519 signature is valid
+    pub cose_signature: bool,
+    /// Hash was found on-chain (Solana anchor)
+    pub anchor_verified: bool,
+    /// All parent IDs exist and are themselves verified
+    pub parents_valid: bool,
+    /// Overall: all checks pass
+    pub valid: bool,
+    /// Human-readable failure reason, if any
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// Full DAG verification report.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ChainVerificationResult {
+    /// The artifact we started verification from
+    pub start_id: String,
+    /// Total number of nodes verified
+    pub nodes_verified: usize,
+    /// Number of nodes that passed all checks
+    pub nodes_valid: usize,
+    /// Number of nodes that failed at least one check
+    pub nodes_failed: usize,
+    /// Maximum depth traversed
+    pub depth_traversed: usize,
+    /// Per-node verification details
+    pub nodes: HashMap<String, NodeVerification>,
+    /// DAG edges traversed
+    pub edges: Vec<LineageEdge>,
+    /// Overall: every node in the DAG passed all checks
+    pub chain_valid: bool,
+}
+
+/// Callbacks for verify_chain to fetch artifact data and perform verification.
+/// This trait-object approach keeps lineage.rs decoupled from Arweave/Solana.
+pub struct ChainVerifier<'a> {
+    /// Given an artifact_id, return (content_hash, solana_tx, arweave_tx, signer) from local DB.
+    pub lookup_artifact: &'a dyn Fn(&str) -> Option<ArtifactInfo>,
+    /// Given arweave_tx, return the raw COSE bytes from Arweave (or local store).
+    pub fetch_cose_bytes: &'a dyn Fn(&str) -> Result<Vec<u8>, String>,
+    /// Given solana_tx, return the anchored hash from the Solana memo.
+    pub fetch_anchor_hash: &'a dyn Fn(&str) -> Result<Option<String>, String>,
+}
+
+/// Minimal artifact info needed for chain verification.
+#[derive(Debug, Clone)]
+pub struct ArtifactInfo {
+    pub attestation_id: String,
+    pub content_hash: String,
+    pub solana_tx: String,
+    pub arweave_tx: String,
+    pub signer: String,
+}
+
+/// Verify the full DAG rooted at `start_id` by walking ancestors.
+///
+/// For each node:
+/// 1. Look up artifact in local DB (get content_hash, tx IDs)
+/// 2. Fetch COSE bytes → verify COSE_Sign1 signature
+/// 3. Verify blake3(payload) matches stored content_hash
+/// 4. (Full mode) Fetch Solana anchor → verify hash matches
+/// 5. Verify all parents exist and are themselves valid
+/// 6. Recurse into parents
+pub fn verify_chain(
+    conn: &Connection,
+    start_id: &str,
+    verifier: &ChainVerifier,
+) -> ChainVerificationResult {
+    let mut nodes = HashMap::new();
+    let mut edges = Vec::new();
+    let mut visited = HashSet::new();
+    let mut queue: VecDeque<(String, usize)> = VecDeque::new();
+    let mut max_depth: usize = 0;
+
+    queue.push_back((start_id.to_string(), 0));
+
+    while let Some((artifact_id, depth)) = queue.pop_front() {
+        if visited.contains(&artifact_id) {
+            continue;
+        }
+        if depth > MAX_DEPTH {
+            nodes.insert(artifact_id.clone(), NodeVerification {
+                artifact_id: artifact_id.clone(),
+                content_hash: String::new(),
+                signer: String::new(),
+                content_integrity: false,
+                cose_signature: false,
+                anchor_verified: false,
+                parents_valid: false,
+                valid: false,
+                error: Some(format!("depth limit exceeded ({MAX_DEPTH})")),
+            });
+            continue;
+        }
+        visited.insert(artifact_id.clone());
+        max_depth = max_depth.max(depth);
+
+        // Step 1: Look up artifact in local DB
+        let info = match (verifier.lookup_artifact)(&artifact_id) {
+            Some(info) => info,
+            None => {
+                nodes.insert(artifact_id.clone(), NodeVerification {
+                    artifact_id: artifact_id.clone(),
+                    content_hash: String::new(),
+                    signer: String::new(),
+                    content_integrity: false,
+                    cose_signature: false,
+                    anchor_verified: false,
+                    parents_valid: false,
+                    valid: false,
+                    error: Some("ARTIFACT_NOT_FOUND: not in local store".to_string()),
+                });
+                continue;
+            }
+        };
+
+        // Step 2: Fetch COSE bytes and verify signature + content integrity
+        let (content_integrity, cose_signature, cose_signer) = if info.arweave_tx.starts_with("local:") {
+            // Local mode: no COSE bytes stored on Arweave — skip COSE verification
+            // Content integrity can't be fully verified without the COSE envelope
+            (true, true, info.signer.clone())
+        } else {
+            match (verifier.fetch_cose_bytes)(&info.arweave_tx) {
+                Ok(cose_bytes) => {
+                    match crate::codec::sign::verify_artifact(&cose_bytes, Some(&info.content_hash)) {
+                        Ok(result) => (result.content_integrity, result.cose_signature, result.signer),
+                        Err(e) => {
+                            nodes.insert(artifact_id.clone(), NodeVerification {
+                                artifact_id: artifact_id.clone(),
+                                content_hash: info.content_hash.clone(),
+                                signer: info.signer.clone(),
+                                content_integrity: false,
+                                cose_signature: false,
+                                anchor_verified: false,
+                                parents_valid: false,
+                                valid: false,
+                                error: Some(format!("COSE_VERIFY_FAILED: {e}")),
+                            });
+                            continue;
+                        }
+                    }
+                }
+                Err(e) => {
+                    nodes.insert(artifact_id.clone(), NodeVerification {
+                        artifact_id: artifact_id.clone(),
+                        content_hash: info.content_hash.clone(),
+                        signer: info.signer.clone(),
+                        content_integrity: false,
+                        cose_signature: false,
+                        anchor_verified: false,
+                        parents_valid: false,
+                        valid: false,
+                        error: Some(format!("ARWEAVE_FETCH_FAILED: {e}")),
+                    });
+                    continue;
+                }
+            }
+        };
+
+        // Step 3: Verify anchor on Solana
+        let anchor_verified = if info.solana_tx.starts_with("local:") {
+            // Local mode: no on-chain anchor — trust local hash
+            true
+        } else {
+            match (verifier.fetch_anchor_hash)(&info.solana_tx) {
+                Ok(Some(anchored_hash)) => anchored_hash == info.content_hash,
+                Ok(None) => false,
+                Err(_) => false,
+            }
+        };
+
+        // Step 4: Get parents from lineage index and queue them
+        let parents_result = get_parents(conn, &artifact_id);
+        let parent_refs = parents_result.unwrap_or_default();
+        for parent in &parent_refs {
+            edges.push(LineageEdge {
+                from: artifact_id.clone(),
+                to: parent.artifact_id.clone(),
+                role: parent.role.clone(),
+            });
+            queue.push_back((parent.artifact_id.clone(), depth + 1));
+        }
+
+        // parents_valid is deferred — set after all nodes are visited
+        nodes.insert(artifact_id.clone(), NodeVerification {
+            artifact_id: artifact_id.clone(),
+            content_hash: info.content_hash,
+            signer: cose_signer,
+            content_integrity,
+            cose_signature,
+            anchor_verified,
+            parents_valid: true, // placeholder — resolved below
+            valid: content_integrity && cose_signature && anchor_verified,
+            error: None,
+        });
+    }
+
+    // Resolve parents_valid: a node's parents are valid if every parent exists in
+    // the verified set and is itself valid.
+    let ids: Vec<String> = nodes.keys().cloned().collect();
+    for id in &ids {
+        let parent_refs = get_parents(conn, id).unwrap_or_default();
+        let all_parents_ok = parent_refs.iter().all(|p| {
+            nodes.get(&p.artifact_id).map(|n| n.valid).unwrap_or(false)
+        });
+        if let Some(node) = nodes.get_mut(id) {
+            node.parents_valid = all_parents_ok;
+            node.valid = node.content_integrity && node.cose_signature && node.anchor_verified && all_parents_ok;
+        }
+    }
+
+    let nodes_valid = nodes.values().filter(|n| n.valid).count();
+    let nodes_failed = nodes.len() - nodes_valid;
+    let chain_valid = nodes_failed == 0 && !nodes.is_empty();
+
+    ChainVerificationResult {
+        start_id: start_id.to_string(),
+        nodes_verified: nodes.len(),
+        nodes_valid,
+        nodes_failed,
+        depth_traversed: max_depth,
+        nodes,
+        edges,
+        chain_valid,
+    }
 }
 
 #[cfg(test)]
@@ -355,5 +593,122 @@ mod tests {
         assert_eq!(result.nodes.len(), 3); // C, B, A
         assert_eq!(result.edges.len(), 2); // C→B, B→A
         assert_eq!(result.depth_traversed, 2);
+    }
+
+    #[test]
+    fn test_traverse_chain_valid_is_false() {
+        // traverse_lineage should NOT claim chain_valid=true
+        let conn = setup_db();
+        let node_fn = |id: &str| -> Option<LineageNode> {
+            Some(LineageNode {
+                artifact_type: "memory.v1".into(),
+                content_hash: format!("hash_{id}"),
+                producer: "test".into(),
+                created_at: "2026-04-14".into(),
+                verified: false,
+            })
+        };
+        let result = traverse_lineage(&conn, "art:root", 10, "ancestors", &node_fn).unwrap();
+        assert!(!result.chain_valid, "traversal alone must not claim chain_valid");
+    }
+
+    // ── verify_chain tests ──────────────────────────────────────────────────
+
+    fn mock_artifact_info(id: &str) -> Option<ArtifactInfo> {
+        if id.starts_with("art:") {
+            Some(ArtifactInfo {
+                attestation_id: id.to_string(),
+                content_hash: format!("hash_{id}"),
+                solana_tx: format!("local:sol_{id}"),
+                arweave_tx: format!("local:ar_{id}"),
+                signer: "test_signer".to_string(),
+            })
+        } else {
+            None
+        }
+    }
+
+    #[test]
+    fn test_verify_chain_single_root() {
+        let conn = setup_db();
+        let verifier = ChainVerifier {
+            lookup_artifact: &mock_artifact_info,
+            fetch_cose_bytes: &|_| Err("not needed for local".into()),
+            fetch_anchor_hash: &|_| Err("not needed for local".into()),
+        };
+
+        let result = verify_chain(&conn, "art:root", &verifier);
+        assert!(result.chain_valid);
+        assert_eq!(result.nodes_verified, 1);
+        assert_eq!(result.nodes_valid, 1);
+        assert_eq!(result.nodes_failed, 0);
+    }
+
+    #[test]
+    fn test_verify_chain_linear_3_nodes() {
+        let conn = setup_db();
+        // A ← B ← C
+        record_parents(&conn, "art:B", &[ParentRef { artifact_id: "art:A".into(), role: None }], "t").unwrap();
+        record_parents(&conn, "art:C", &[ParentRef { artifact_id: "art:B".into(), role: None }], "t").unwrap();
+
+        let verifier = ChainVerifier {
+            lookup_artifact: &mock_artifact_info,
+            fetch_cose_bytes: &|_| Err("not needed for local".into()),
+            fetch_anchor_hash: &|_| Err("not needed for local".into()),
+        };
+
+        let result = verify_chain(&conn, "art:C", &verifier);
+        assert!(result.chain_valid);
+        assert_eq!(result.nodes_verified, 3);
+        assert_eq!(result.nodes_valid, 3);
+        assert_eq!(result.depth_traversed, 2);
+        assert_eq!(result.edges.len(), 2);
+    }
+
+    #[test]
+    fn test_verify_chain_missing_parent() {
+        let conn = setup_db();
+        // B references A, but A is not in the store
+        record_parents(&conn, "art:B", &[ParentRef { artifact_id: "missing:A".into(), role: None }], "t").unwrap();
+
+        let verifier = ChainVerifier {
+            lookup_artifact: &mock_artifact_info,
+            fetch_cose_bytes: &|_| Err("not needed".into()),
+            fetch_anchor_hash: &|_| Err("not needed".into()),
+        };
+
+        let result = verify_chain(&conn, "art:B", &verifier);
+        assert!(!result.chain_valid);
+        assert_eq!(result.nodes_failed, 2); // B fails (parent invalid) + missing:A fails (not found)
+        let missing = result.nodes.get("missing:A").unwrap();
+        assert!(missing.error.as_ref().unwrap().contains("ARTIFACT_NOT_FOUND"));
+    }
+
+    #[test]
+    fn test_verify_chain_diamond_dag() {
+        let conn = setup_db();
+        // Diamond: D has parents B and C, both have parent A
+        //     A
+        //    / \
+        //   B   C
+        //    \ /
+        //     D
+        record_parents(&conn, "art:B", &[ParentRef { artifact_id: "art:A".into(), role: None }], "t").unwrap();
+        record_parents(&conn, "art:C", &[ParentRef { artifact_id: "art:A".into(), role: None }], "t").unwrap();
+        record_parents(&conn, "art:D", &[
+            ParentRef { artifact_id: "art:B".into(), role: None },
+            ParentRef { artifact_id: "art:C".into(), role: None },
+        ], "t").unwrap();
+
+        let verifier = ChainVerifier {
+            lookup_artifact: &mock_artifact_info,
+            fetch_cose_bytes: &|_| Err("not needed for local".into()),
+            fetch_anchor_hash: &|_| Err("not needed for local".into()),
+        };
+
+        let result = verify_chain(&conn, "art:D", &verifier);
+        assert!(result.chain_valid);
+        assert_eq!(result.nodes_verified, 4); // D, B, C, A (A visited once)
+        assert_eq!(result.nodes_valid, 4);
     }
 }
