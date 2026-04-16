@@ -2,6 +2,8 @@
 
 **Verifiable memory attestation primitive for AI agents.**
 
+Mnemonic is a verifiable artifact trail for AI agents: every memory, retrieved context, answer, and tool result can become a signed, content-addressed, semantically searchable, and externally verifiable breadcrumb.
+
 > Mnemonic gives any AI agent a Solana keypair identity and the ability to create
 > permanent, hash-anchored, semantically searchable proofs of its work on Arweave.
 
