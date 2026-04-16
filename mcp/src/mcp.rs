@@ -76,12 +76,24 @@ fn tool_definitions() -> Value {
         },
         {
             "name": "mnemonic_sign_memory",
-            "description": "Creates a verifiable memory attestation: embeds content, SHA-256 hash, stores on Arweave, anchors on Solana via SPL Memo",
+            "description": "Creates a verifiable memory attestation: embeds content, blake3+CBOR+COSE, stores on Arweave, anchors on Solana via SPL Memo. Supports parent references to build a verifiable DAG.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "content": {"type": "string", "description": "Content to attest"},
                     "tags": {"type": "array", "items": {"type": "string"}, "description": "Optional tags"},
+                    "parents": {
+                        "type": "array",
+                        "description": "Parent artifact references for DAG lineage",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "artifact_id": {"type": "string", "description": "Parent artifact ID"},
+                                "role": {"type": "string", "description": "Semantic role: context, state, trigger, dependency"}
+                            },
+                            "required": ["artifact_id"]
+                        }
+                    },
                 },
                 "required": ["content"],
             },
@@ -106,6 +118,30 @@ fn tool_definitions() -> Value {
                     "challenge": {"type": "string", "description": "Challenge to sign"},
                 },
                 "required": ["challenge"],
+            },
+        },
+        {
+            "name": "mnemonic_lineage",
+            "description": "Traverse the lineage DAG from an artifact. Shows ancestor/descendant relationships and edges.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "artifact_id": {"type": "string", "description": "Starting artifact ID"},
+                    "direction": {"type": "string", "description": "Traversal direction: ancestors, descendants, or both", "default": "ancestors"},
+                    "max_depth": {"type": "integer", "description": "Maximum traversal depth", "default": 10},
+                },
+                "required": ["artifact_id"],
+            },
+        },
+        {
+            "name": "mnemonic_verify_chain",
+            "description": "Verify the full DAG rooted at an artifact. For each node: verifies COSE signature, content hash integrity, on-chain anchor, and parent validity. Returns per-node report.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "artifact_id": {"type": "string", "description": "Artifact ID to verify (walks all ancestors)"},
+                },
+                "required": ["artifact_id"],
             },
         },
         {
@@ -164,11 +200,21 @@ async fn handle_tool_call(name: &str, args: &Value, state: &McpState) -> Result<
                 .and_then(|t| t.as_array())
                 .map(|a| a.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
                 .unwrap_or_default();
+            let parents: Vec<crate::codec::schema::ParentRef> = args.get("parents")
+                .and_then(|p| p.as_array())
+                .map(|a| a.iter().filter_map(|v| {
+                    let id = v["artifact_id"].as_str()?;
+                    Some(crate::codec::schema::ParentRef {
+                        artifact_id: id.to_string(),
+                        role: v.get("role").and_then(|r| r.as_str()).map(|s| s.to_string()),
+                    })
+                }).collect())
+                .unwrap_or_default();
             let cost_hint = state.pricing.cost_hint(state.sol_tx_fee_lamports);
             tools::sign_memory(
                 &state.keypair, &state.solana, &state.arweave, &state.store,
                 state.embedder.as_ref(), &state.compressor,
-                &content, &tags, &cost_hint, &state.storage_mode,
+                &content, &tags, &parents, &cost_hint, &state.storage_mode,
             ).await.map_err(|e| e.to_string())?
         }
         "mnemonic_verify" => {
@@ -176,6 +222,20 @@ async fn handle_tool_call(name: &str, args: &Value, state: &McpState) -> Result<
             let ar = args.get("arweave_tx").and_then(|v| v.as_str());
             tools::verify(&state.solana, &state.arweave, &state.store, sol, ar, &state.storage_mode)
                 .await.map_err(|e| e.to_string())?
+        }
+        "mnemonic_lineage" => {
+            let artifact_id = args["artifact_id"].as_str().ok_or("artifact_id required")?;
+            let direction = args.get("direction").and_then(|v| v.as_str()).unwrap_or("ancestors");
+            let max_depth = args.get("max_depth").and_then(|v| v.as_u64()).unwrap_or(10) as usize;
+            let store = state.store.lock().unwrap();
+            tools::get_lineage(&store, artifact_id, direction, max_depth)
+        }
+        "mnemonic_verify_chain" => {
+            let artifact_id = args["artifact_id"].as_str().ok_or("artifact_id required")?.to_string();
+            tools::verify_chain(
+                &state.solana, &state.arweave, &state.store,
+                &artifact_id, &state.storage_mode,
+            ).await.map_err(|e| e.to_string())?
         }
         "mnemonic_prove_identity" => {
             // Pure crypto, no DB or network

@@ -73,13 +73,20 @@ impl AttestationStore {
         }
         let conn = Connection::open(path).context("opening SQLite")?;
         conn.execute_batch(SCHEMA).context("initializing schema")?;
+        crate::lineage::init_lineage_schema(&conn).context("initializing lineage schema")?;
         Ok(Self { conn })
     }
 
     pub fn in_memory() -> anyhow::Result<Self> {
         let conn = Connection::open_in_memory()?;
         conn.execute_batch(SCHEMA)?;
+        crate::lineage::init_lineage_schema(&conn)?;
         Ok(Self { conn })
+    }
+
+    /// Access the underlying SQLite connection (for lineage operations).
+    pub fn conn(&self) -> &Connection {
+        &self.conn
     }
 
     pub fn save_attestation(
@@ -295,6 +302,35 @@ impl AttestationStore {
             })),
             None => Ok(None),
         }
+    }
+
+    /// Find an attestation by its artifact/attestation ID (for chain verification).
+    pub fn find_by_id(&self, attestation_id: &str) -> anyhow::Result<Option<AttestationRow>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT attestation_id, content, content_hash, solana_tx, arweave_tx, signer_pubkey
+             FROM attestations WHERE attestation_id = ? LIMIT 1"
+        )?;
+        let mut rows = stmt.query(params![attestation_id])?;
+        match rows.next()? {
+            Some(row) => Ok(Some(AttestationRow {
+                attestation_id: row.get(0)?,
+                content: row.get(1)?,
+                content_hash: row.get(2)?,
+                solana_tx: row.get(3)?,
+                arweave_tx: row.get(4)?,
+                signer_pubkey: row.get(5)?,
+            })),
+            None => Ok(None),
+        }
+    }
+
+    /// Check if an attestation ID exists in the store.
+    pub fn attestation_exists(&self, attestation_id: &str) -> bool {
+        self.conn.query_row(
+            "SELECT COUNT(*) FROM attestations WHERE attestation_id = ?",
+            params![attestation_id],
+            |row| row.get::<_, i64>(0),
+        ).map(|c| c > 0).unwrap_or(false)
     }
 
     pub fn count(&self, signer: &str) -> anyhow::Result<i64> {
