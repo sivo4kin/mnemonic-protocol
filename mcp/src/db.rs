@@ -100,6 +100,7 @@ impl AttestationStore {
         let conn = Connection::open(path).context("opening SQLite")?;
         conn.execute_batch(SCHEMA).context("initializing schema")?;
         migrate_attestation_embeddings(&conn).context("migrating attestation_embeddings")?;
+        crate::lineage::init_lineage_schema(&conn).context("initializing lineage schema")?;
         Ok(Self { conn })
     }
 
@@ -107,6 +108,7 @@ impl AttestationStore {
         let conn = Connection::open_in_memory()?;
         conn.execute_batch(SCHEMA)?;
         migrate_attestation_embeddings(&conn)?;
+        crate::lineage::init_lineage_schema(&conn)?;
         Ok(Self { conn })
     }
 
