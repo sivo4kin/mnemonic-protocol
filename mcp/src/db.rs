@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS attestations (
 );
 CREATE TABLE IF NOT EXISTS attestation_embeddings (
     attestation_id TEXT PRIMARY KEY,
+    embedding_model TEXT NOT NULL DEFAULT '',
     embedding_dim INTEGER NOT NULL,
     embedding BLOB NOT NULL,
     FOREIGN KEY (attestation_id) REFERENCES attestations(attestation_id)
@@ -62,6 +63,31 @@ CREATE TABLE IF NOT EXISTS attestation_costs (
 );
 "#;
 
+/// Older DBs had only `(attestation_id, embedding_dim, embedding)`; add `embedding_model` if missing.
+fn migrate_attestation_embeddings(conn: &Connection) -> anyhow::Result<()> {
+    let table_exists: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='attestation_embeddings'",
+        [],
+        |row| row.get(0),
+    )?;
+    if table_exists == 0 {
+        return Ok(());
+    }
+    let mut stmt = conn.prepare("PRAGMA table_info(attestation_embeddings)")?;
+    let cols: Vec<String> = stmt
+        .query_map([], |row| row.get::<_, String>(1))?
+        .filter_map(|r| r.ok())
+        .collect();
+    if !cols.iter().any(|c| c == "embedding_model") {
+        conn.execute(
+            "ALTER TABLE attestation_embeddings ADD COLUMN embedding_model TEXT NOT NULL DEFAULT ''",
+            [],
+        )
+        .context("adding embedding_model to attestation_embeddings")?;
+    }
+    Ok(())
+}
+
 pub struct AttestationStore {
     conn: Connection,
 }
@@ -73,14 +99,14 @@ impl AttestationStore {
         }
         let conn = Connection::open(path).context("opening SQLite")?;
         conn.execute_batch(SCHEMA).context("initializing schema")?;
-        crate::lineage::init_lineage_schema(&conn).context("initializing lineage schema")?;
+        migrate_attestation_embeddings(&conn).context("migrating attestation_embeddings")?;
         Ok(Self { conn })
     }
 
     pub fn in_memory() -> anyhow::Result<Self> {
         let conn = Connection::open_in_memory()?;
         conn.execute_batch(SCHEMA)?;
-        crate::lineage::init_lineage_schema(&conn)?;
+        migrate_attestation_embeddings(&conn)?;
         Ok(Self { conn })
     }
 
@@ -99,6 +125,7 @@ impl AttestationStore {
         arweave_tx: &str,
         signer_pubkey: &str,
         created_at: &str,
+        embedding_model: &str,
         embedding: &[f32],
     ) -> anyhow::Result<()> {
         let tags_json = serde_json::to_string(tags)?;
@@ -110,8 +137,9 @@ impl AttestationStore {
 
         let emb_bytes = floats_to_bytes(embedding);
         self.conn.execute(
-            "INSERT OR REPLACE INTO attestation_embeddings VALUES (?,?,?)",
-            params![attestation_id, embedding.len() as i32, emb_bytes],
+            "INSERT OR REPLACE INTO attestation_embeddings \
+             (attestation_id, embedding_model, embedding_dim, embedding) VALUES (?,?,?,?)",
+            params![attestation_id, embedding_model, embedding.len() as i32, emb_bytes],
         )?;
         Ok(())
     }
@@ -483,6 +511,7 @@ mod tests {
         store.save_attestation(
             "att-1", "test content", "hash123", &["tag1".into()],
             "sol_tx_1", "ar_tx_1", "signer1", "2026-04-13T00:00:00Z",
+            embedder().model_id(),
             &emb,
         ).unwrap();
         assert_eq!(store.count("signer1").unwrap(), 1);
@@ -499,6 +528,7 @@ mod tests {
             store.save_attestation(
                 &format!("att-{i}"), &content, &format!("h{i}"), &[],
                 &format!("sol{i}"), &format!("ar{i}"), "agent1", "2026-04-13",
+                e.model_id(),
                 &emb,
             ).unwrap();
         }

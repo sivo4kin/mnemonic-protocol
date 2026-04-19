@@ -11,7 +11,8 @@ use crate::{arweave::ArweaveClient, compress::EmbeddingCompressor, db::Attestati
 #[derive(Debug, Deserialize)]
 pub struct JsonRpcRequest {
     pub jsonrpc: String,
-    pub id: Value,
+    #[serde(default)]
+    pub id: Option<Value>,
     pub method: String,
     #[serde(default)]
     pub params: Value,
@@ -178,10 +179,15 @@ pub async fn handle_request(req: &JsonRpcRequest, state: &McpState) -> JsonRpcRe
 
     match result {
         Ok(val) => JsonRpcResponse {
-            jsonrpc: "2.0".into(), id: req.id.clone(), result: Some(val), error: None,
+            jsonrpc: "2.0".into(),
+            id: req.id.clone().unwrap_or(Value::Null),
+            result: Some(val),
+            error: None,
         },
         Err(msg) => JsonRpcResponse {
-            jsonrpc: "2.0".into(), id: req.id.clone(), result: None,
+            jsonrpc: "2.0".into(),
+            id: req.id.clone().unwrap_or(Value::Null),
+            result: None,
             error: Some(JsonRpcError { code: -32603, message: msg }),
         },
     }

@@ -145,7 +145,7 @@ pub async fn sign_memory(
         let store = store.lock().unwrap();
         store.save_attestation(
             &attestation_id, content, &content_hash, tags,
-            &solana_tx, &arweave_tx, &pubkey, &now, &embedding,
+            &solana_tx, &arweave_tx, &pubkey, &now, embedder.model_id(), &embedding,
         )?;
         // Record parent references in lineage index
         if !parents.is_empty() {

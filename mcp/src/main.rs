@@ -96,7 +96,7 @@ async fn mcp_handler(
                         "mnemonic_sign_memory",
                     ) {
                         let err_body = serde_json::json!({
-                            "jsonrpc": "2.0", "id": req.id,
+                            "jsonrpc": "2.0", "id": req.id.clone().unwrap_or(serde_json::Value::Null),
                             "error": {"code": -32600, "message": format!("payment failed: {e}")}
                         });
                         return (StatusCode::PAYMENT_REQUIRED, Json(err_body)).into_response();
@@ -125,7 +125,7 @@ async fn mcp_handler(
             }
             payment::PaymentGate::Unauthorized(msg) => {
                 let err_body = serde_json::json!({
-                    "jsonrpc": "2.0", "id": req.id,
+                    "jsonrpc": "2.0", "id": req.id.clone().unwrap_or(serde_json::Value::Null),
                     "error": {"code": -32600, "message": msg}
                 });
                 (StatusCode::UNAUTHORIZED, Json(err_body)).into_response()
