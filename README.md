@@ -1,3 +1,11 @@
+Further development has moved to:
+
+👉 **[Mnemonic protocol github repo]([https://github.com/mnemonik-xyz/monorepo])**
+
+👉 **[Mnemonic protocol site](https://mnemonik.xyz)**
+
+👉 **[Live MCP server](https://mcp.mnemonik.xyz)**
+
 # mnemonic-protocol
 
 Mnemonic is a verifiable memory / artifact infrastructure project for AI agents.
